@@ -1,0 +1,50 @@
+{
+  "name": "@dsh-external/dsh-usage-heatmap",
+  "version": "0.0.1",
+  "description": "模型用量统计面板：累计 Token/峰值/最长会话/连续天数指标卡 + GitHub 风格 Token 热力图（日/周/累计切换）+ 活动洞察，数据来自本地 DSH 用量聚合",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "files": [
+    "lib"
+  ],
+  "license": "BSD-3-Clause",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.0.1-rc <2",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc <2",
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc <2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.0",
+    "tsdown": "^0.22.14"
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:client": "tsdown"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  }
+}
