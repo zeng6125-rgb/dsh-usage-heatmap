@@ -1,4 +1,9 @@
 node_modules/
-lib/
 *.tsbuildinfo
 *.tgz
+
+# lib/ is committed on purpose: `dsh plugin add github:zeng6125-rgb/dsh-usage-heatmap`
+# installs straight from this repository, and scripts/build.sh needs a local DSH
+# source checkout (DSH_CHECKOUT) that an end user does not have. Shipping the
+# compiled output is what makes the git install work without a build step.
+!lib/
