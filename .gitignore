@@ -2,6 +2,10 @@ node_modules/
 *.tsbuildinfo
 *.tgz
 
+# 探针脚本与验证证据（约 1.6MB，本地复现用）：不入库。
+# ⚠ gitignore 不影响**已跟踪**文件——tools/ 下早期提交的 8 个 probe-*.mjs 仍在版本控制中。
+tools/
+
 # lib/ is committed on purpose: `dsh plugin add github:zeng6125-rgb/dsh-usage-heatmap`
 # installs straight from this repository, and scripts/build.sh needs a local DSH
 # source checkout (DSH_CHECKOUT) that an end user does not have. Shipping the
