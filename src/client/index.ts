@@ -76,16 +76,60 @@ var CSS = [
   /* 日历热力网格（GitHub 风格）：列宽自适应铺满容器，正常情况下无需滚动（无滚动条）；
      极窄容器才横向溢出，此时浏览器按默认行为显示滚动条（overflow-x:auto 只在溢出时出现） */
   '.uh-calWrap{overflow-x:auto;padding:2px 0 6px}',
-  '.uh-cal{display:flex;gap:6px;align-items:stretch;width:100%}',
-  /* 行标：与格子同网格结构（7 行 1fr + 同 gap，容器高度=格子高度-17px 由月份行撑出）→ 行行对齐 */
-  '.uh-wdLabels{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;height:calc(100% - 17px);margin-top:17px;width:16px;flex:none;font-size:9px;color:var(--dsw-alias-label-tertiary,#8f959e);text-align:right}',
-  '.uh-wdLabels > span{display:flex;align-items:center;justify-content:flex-end}',
-  '.uh-main{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}',
-  '.uh-months{display:grid;grid-template-columns:repeat(var(--uh-cols),minmax(11px,1fr));gap:3px;height:13px;width:100%;font-size:10px;line-height:13px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums}',
+  /* ★ 列轨道唯一来源：--uh-tracks 由 .uh-cal 声明一次，.uh-months 与 .uh-cells 共同消费。
+     两者宽度同为 .uh-main 的 100%，同一模板 + 同一可用宽度 ⇒ 列位置解析结果必然一致，
+     月份轴与格子列天然一一对齐（不存在"两边各写一遍 minmax 再对齐"的余地）。
+     ★ 行轨道唯一来源：行标是 .uh-cells 的 grid 成员（第 1 列、第 1..7 行），
+     与格子落在同一批行轨道上 ⇒ 行高由定义相等，无需任何高度/偏移镜像常量。
+     ⚠ 历史错位根因就是镜像常量：height:calc(100% - 17px)（百分比高度遇 auto 包含块不解析，
+    1fr 行退化为 13px 文字行盒）+ margin-top:17px（=月份行 13px + gap 4px）。
+     此后**禁止**再引入 calc(100% - Npx) / margin-top:Npx 这类跨元素补偿。 */
+  '.uh-cal{width:100%;--uh-tracks:var(--uh-gutter,16px) repeat(var(--uh-cols,37),minmax(var(--uh-cell-min,11px),1fr))}',
+  '.uh-main{display:flex;flex-direction:column;gap:4px;min-width:0}',
+  '.uh-months{display:grid;grid-template-columns:var(--uh-tracks);gap:3px;height:13px;width:100%;font-size:10px;line-height:13px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums}',
   '.uh-months > span{white-space:nowrap}',
+  /* 末位月份标签锚到容器右缘。理由：标签墨迹宽（"12月"≈21px）必然超过最窄轨道（11~14px），
+     左对齐时位于末尾轨道的标签会把墨迹顶出 .uh-calWrap 右缘 → scrollWidth 虚增 →
+     无端冒出横向滚动条（实测 week@768 = 7.47px、day/cum@320 = 3.67px，且 gridOverflowX=0，
+     说明不是布局溢出而是纯文字墨迹）。改为右对齐后墨迹向左伸展，必然落在容器内。
+     只作用于"最后一个非空标签"这一个元素，其余标签仍严格左对齐到所在列 ⇒ 月份轴对齐不受影响。
+     安全性：相邻列相隔 7 天，不可能连续两列都换月，故末位标签前面那个非空标签至少隔 2 轨，
+     右对齐后向左最多伸展 (墨迹宽 − 轨宽) ≤ 7.5px，不会与它重叠（已实测 labelOverlapMax = 0）。 */
+  '.uh-months > span.uh-monthEnd{justify-self:end}',
+  /* 行标：格子 grid 的第 1 列成员（行轨道与格子同源，见 .uh-cal 注释）。
+     ★ align-self:center + height:0 是"行高解耦"的关键，缺一不可：
+       标签自身是 grid item，其行盒会参与所在行的 auto 尺寸计算 → 字号/行高变大时
+       行标那 7 行会被文字撑高，而格子行高仍由 aspect-ratio:1 的宽度决定 → 又开始漂移。
+       height:0 让标签的盒高恒为 0，align-self:center 则把它视觉居中于行轨道，
+       于是"行标行盒"对行高的贡献被彻底移除，行高只剩格子这一个来源。
+     ★ 判别性实验（改字号/行高看 |maxΔCY| 是否漂移）：仅 line-height:1 时
+       fs12px→0.41px、fs20px→4.41px、显式 line-height:20px→4.41px（仍在漂移）；
+       加上 height:0 后 fs7/9/12/20px 与 line-height 9/20px 全部恒为 0.01px（不漂移）。
+       ⇒ 这才是"结构同源"而非"常量凑对"的硬证据。
+     overflow:visible 保证 height:0 不会裁掉文字墨迹。
+
+     ★ 光学修正 translateY(-0.0667em)：上面的 height:0 + align-items:center 让**行盒**中心
+       与格子行中心精确重合（盒量测 0.008px），但用户看到的是**字形墨迹**，两者并不重合——
+       本字体（Segoe UI / 系统 CJK 回退）度量 ascent=10 / descent=2 不对称，且 CJK 字形墨迹
+       在 em 盒内偏上，导致墨迹中心落在行盒中心**下方**（canvas TextMetrics 推导：
+       一+0.5 / 三+1.0 / 五+1.0 / 日+1.5 px）。**盒量测测不到这个残差，是它的盲区。**
+       真实面板像素扫描（强度加权质心法，w=480，translateY 剂量-反应）：
+         无修正            → 墨迹中心 − 格子行中心 = **+0.590px**（偏下，即用户观感）
+         有效 −0.5px @DPR4 → **+0.138px**（平台期）
+         有效 −0.75px@DPR4 → −0.088px
+       取值依据（不是拍脑袋，是"两个 DPR 都要落对设备像素"）：
+         DPR=1：−0.5px **被舍入吞掉**（与无修正位图相同），需 ≤−0.6px 才翻到 −1 设备像素；
+         DPR=4：−0.6px = −2.4 设备像素 → 舍入到 −2（= −0.5 CSS px，落平台期）。
+       ⇒ −0.6px 在两个 DPR 下都取到正确档位；换算成 em（−0.6/9px = −0.0667em），
+       使修正随 font-size 等比缩放（墨迹偏移由字体度量决定、与字号成正比，
+       用 px 会在字号变化后失准）。逐字残余 ±0.5px 是「一/三/五/日」字形墨迹分布差异
+       （一为单横无下伸部、日有下伸部），属字体固有，无法用单一常量消除。
+       ⚠ 这是**光学修正**，不是行轨道补偿：它只平移墨迹，不参与任何行高计算，
+       故不违反上面"禁止跨元素镜像常量"的约束（那条针对的是用高度/边距去凑另一元素的几何）。 */
+  '.uh-wdLabel{display:flex;align-self:center;height:0;overflow:visible;align-items:center;justify-content:flex-end;font-size:9px;line-height:1;color:var(--dsw-alias-label-tertiary,#8f959e);text-align:right;transform:translateY(-0.0667em)}',
   /* 格子区独立合成层：滚动时整块贴图平移，不逐帧重栅格化几百个圆角色块（勿加 contain，见 .uh-page 注释） */
-  '.uh-cells{display:grid;grid-auto-flow:column;grid-template-columns:repeat(var(--uh-cols),minmax(11px,1fr));grid-template-rows:repeat(7,auto);gap:3px;width:100%;transform:translateZ(0)}',
-  '.uh-weekCells{display:grid;grid-template-columns:repeat(var(--uh-cols),minmax(13px,1fr));gap:3px;width:100%;transform:translateZ(0)}',
+  '.uh-cells{display:grid;grid-auto-flow:column;grid-template-columns:var(--uh-tracks);grid-template-rows:repeat(7,auto);gap:3px;width:100%;transform:translateZ(0)}',
+  '.uh-weekCells{display:grid;grid-template-columns:var(--uh-tracks);gap:3px;width:100%;transform:translateZ(0)}',
   '.uh-cell{aspect-ratio:1;border-radius:2px;background:var(--uh-l0);cursor:pointer}',
   '.uh-cell:hover{outline:2px solid rgb(31 35 41 / 45%);outline-offset:0}',
   '.uh-cell[data-future="1"]{visibility:hidden;pointer-events:none}',
@@ -143,7 +187,11 @@ function ensureCss(): void {
 
 var _cache: any = { at: 0, raw: null, data: null, promise: null }
 var SWR_TTL_MS = 10000 // 客户端 SWR：10s 内命中本地缓存
-var POLL_MS = 60000 // 面板打开期间的后台轮询间隔
+/* 后台轮询间隔。★ 必须 ≤ 宿主 STATE_TTL_MS(20000, 见 src/index.ts:37)：
+   轮询间隔大于宿主 TTL 时，每次轮询都必然落进宿主的"旧缓存 + 后台增量刷新"分支
+   → 每次轮询都白白触发一轮后台扫描（全命中约 26ms）。取 15s 既在 TTL 内，
+   又比原来 60s 更及时，且不会比 TTL 更频繁地打宿主。 */
+var POLL_MS = 15000
 
 function fetchState(force?: boolean): Promise<any> {
   var now = Date.now()
@@ -334,15 +382,28 @@ interface RangeInfo {
   columns: string[] // 每列的周一键
 }
 
-/** 容器实测宽度 → 列数的常量与换算（列宽 = 11px 格 + 3px gap = 14px 步进） */
-var COLS_MIN = 10
+/** 容器实测宽度 → 列数的常量与换算（列宽 = cellMin 格 + 3px gap；行标槽另占 GUTTER 宽） */
 var COLS_MAX = 54
-var COL_STRIDE = 14
-var COL_PAD = 19
-var COLS_DEFAULT = 37 // 尚未测量到宽度时的回退列数
+var GUTTER = 16 // 行标槽宽，与 .uh-cal 的 --uh-gutter 同源
+var COL_SAFETY = 4 // 亚像素取整余量：防止 minmax 下限把末列挤出容器造成 1px 横向滚动
 
-function calcCols(wrapW: number): number {
-  return wrapW > 40 ? Math.max(COLS_MIN, Math.min(COLS_MAX, Math.floor((wrapW - COL_PAD) / COL_STRIDE))) : COLS_DEFAULT
+/* 列数换算：**由可用宽度解出**，且**永不猜测**。
+   网格总占用 = gutter + n × stride（1 条行标槽 + n 条格轨道，n 个 3px 间隙；stride = 格宽 + gap）。
+   解 n ≤ (availW − gutter − COL_SAFETY) / stride 即"刚好塞满且不溢出"。
+   gutter 由调用方传入（极窄退化态会传 0，见 HeatmapCard 的 showLabels）—— 不在函数里重复扣减，
+   否则会把行标槽扣两次、列数偏小。
+   ★ 禁止再引入 COLS_DEFAULT=37 这类"常规值回退"：面板极窄时（视口 320px → .uh-page 被压到
+     cardW=30px、wrapW=0）回退到 37 列会让 37 个 minmax 下限硬撑出 520px 横向溢出（周视图 520px）。
+   ★ 下界必须是 1，不能是"最小 10 列"：10 列 × (11+3) + 16 = 156px，在 wrapW < 156 时
+     仍会硬撑出溢出（实测 wrapW=0/30 时 156px）。改为"能塞几列就几列"，退化到 1 列即 14px，
+     是所有宽度下都不溢出。实测 wrapW=0 时溢出 520px → 16px（余下 16px 是 .uh-card 内边距+边框）。
+   ★ 正常宽度不受影响：wrapW ≥ 160 时解出的列数本就 ≥ 10，宽度足够时列数照常铺满。
+   ★ 单调性：availW 越小 → 列数越少，不存在"窄容器反而列更多"的跳变。 */
+function calcCols(availW: number, cellMin: number, gutter: number): number {
+  var stride = cellMin + 3
+  var n = Math.floor((availW - gutter - COL_SAFETY) / stride)
+  if (!(n >= 1)) n = 1 // 未测量 / 被压成 0 / 极窄 → 1 列，绝不猜测常规值
+  return Math.min(COLS_MAX, n)
 }
 
 /** 展示区间：从本周起向右回溯，取最近 maxCols 周（列数由容器宽度决定 → 格子保持 ≥11px 正方形铺满） */
@@ -363,8 +424,19 @@ function makeLevelFn(values: number[]): (v: number) => number {
   if (!sorted.length) return function () { return 0 }
   return function (v: number): number {
     if (v <= 0) return 0
-    var le = 0
-    for (var i = 0; i < sorted.length; i++) if (sorted[i] <= v) le++
+    /* 二分求 upper_bound：le = 「sorted 中 ≤ v 的个数」。
+       原先用 for 线性扫描，且本函数**每格调用一次**（COLS_MAX 54 × 7 行 = 378 格）
+       → 单次渲染约 8000 次比较，是渲染期主线程的纯算法冗余。
+       二分后 O(log n)，且与线性版**语义完全等价**（都是 upper_bound 计数，
+       含重复值时的计数也一致，仅边界取法不同）。 */
+    var lo = 0
+    var hi = sorted.length
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1
+      if (sorted[mid] <= v) lo = mid + 1
+      else hi = mid
+    }
+    var le = lo
     return Math.min(4, Math.ceil((le / sorted.length) * 4))
   }
 }
@@ -495,13 +567,52 @@ function HeatmapCard(props: any): any {
     }
     return function () { if (ro) ro.disconnect() }
   }, [hasData, mode])
-  var cols = calcCols(wrapW)
+  var isWeek = mode === 'week'
+  var isCum = mode === 'cum'
+  var cellMin = isWeek ? 13 : 11
+  /* 行标槽宽：与 .uh-cal 的 --uh-gutter 同源。三模式恒为 GUTTER（week 用 .uh-weekPad 占位），
+     这样切换 日/周/累计 时格子左缘不动 —— 若 week 取 0，整块日历会横跳 19px（实测 3.00 vs 19.00）。
+     ★ 唯一的例外是"连行标槽都放不下"的极窄退化态（面板被压到 30px 级、wrapW < 30px）：
+       此时保留 16px 行标槽 + 11px 最小格 = 30px 最小占地，必然溢出。
+       放不下就把行标槽连同行标一起去掉（showLabels=false），只留格子。
+       这与 calcCols 的"能塞几列就几列"同一套退化哲学：宁可少显示，也不撑破容器。 */
+  var showLabels = wrapW >= GUTTER + cellMin + 3
+  var gutter = showLabels ? GUTTER : 0
+  /* 格宽下限同样退化：minmax 的下限是硬下限，容器比它还窄时 minmax 会撑破容器（CSS 规范行为，
+     min 优先于 1fr 的收缩）。因此把下限压到"当前容器能容纳的最大格宽"，
+     保证 1 列永远塞得进 → 极窄态溢出进一步收敛（实测 520 → 16px，余下 16px 是
+     .uh-card 的 14px×2 内边距 + 2px 边框，属卡片自身占地，与网格无关）。
+     正常宽度下 avail 充足，cellMin 保持 11/13px 原值，正方形与视觉尺寸完全不变。 */
+  var avail = Math.max(0, wrapW - gutter - COL_SAFETY)
+  var effCellMin = Math.max(1, Math.min(cellMin, avail - 3))
+  var cols = calcCols(wrapW, effCellMin, gutter)
+  /* 月份轴同样退化：需要"1 格 + 3px + 一个标签的最小墨迹宽"才值得显示。
+     标签宽取最宽的"12月"量级（约 22px），不够就整行不渲染（见 monthsRow 注释）。 */
+  var showMonths = wrapW >= gutter + effCellMin + 3 + 22
   var range = React.useMemo(function () { return buildRange(cols) }, [cols])
   var cumAt = React.useMemo(function () { return makeCumulative(days) }, [JSON.stringify(days)])
   var months = monthLabels(range.columns)
+  // 末位非空月份标签：锚到容器右缘，避免文字墨迹顶出 .uh-calWrap 造成假横向滚动（见 CSS 注释）
+  var lastMon = months.length - 1
+  while (lastMon > 0 && months[lastMon] === '') lastMon--
+  /* 月份轴：三模式共用同一段结构，保证行高/列轨道/左缘完全一致。
+     极窄退化态（showMonths=false，面板窄到放不下一列 + 一个"12月"标签）整行不渲染：
+     月份标签是 nowrap 文字，其 min-content 宽度会作为 grid item 撑开所在轨道 →
+     在 30px 级面板里硬撑出 19px 溢出。此时显示月份轴也没有信息量，直接省掉。 */
+  var monthsRow = showMonths
+    ? h(
+        'div',
+        { className: 'uh-months' },
+        // 首列占位：月份轴与格子共用 --uh-tracks，缺了这个槽位标签就会整体左移一轨
+        h('span', { className: 'uh-monthPad', key: '__pad' }),
+        months.map(function (mm: string, i: number) {
+          return h('span', { key: i, className: i === lastMon ? 'uh-monthEnd' : undefined }, mm)
+        }),
+      )
+    : null
   var total = m.totalTokens || 0
-  var isWeek = mode === 'week'
-  var isCum = mode === 'cum'
+  // 列/行轨道的唯一来源：内联在 .uh-cal 上，--uh-tracks 同元素声明后由两个子 grid 继承
+  var calStyle = { '--uh-cols': range.columns.length, '--uh-gutter': gutter + 'px', '--uh-cell-min': effCellMin + 'px' } as any
 
   // 当前模式的取值集合 → 分位档
   var levelFn = React.useMemo(
@@ -586,18 +697,16 @@ function HeatmapCard(props: any): any {
       { className: 'uh-calWrap', ref: wrapRef },
       h(
         'div',
-        { className: 'uh-cal' },
+        { className: 'uh-cal', style: calStyle },
         h(
           'div',
           { className: 'uh-main' },
+          monthsRow,
           h(
             'div',
-            { className: 'uh-months', style: { '--uh-cols': range.columns.length } as any },
-            months.map(function (mm: string, i: number) { return h('span', { key: i }, mm) }),
-          ),
-          h(
-            'div',
-            { className: 'uh-weekCells', style: { '--uh-cols': range.columns.length } as any },
+            { className: 'uh-weekCells' },
+            // 周视图无行标，但保留同一首列轨道 → 三种模式左缘一致，切换时不横跳
+            h('span', { className: 'uh-weekPad', key: '__pad' }),
             weekCells,
           ),
         ),
@@ -643,25 +752,25 @@ function HeatmapCard(props: any): any {
       { className: 'uh-calWrap', ref: wrapRef },
       h(
         'div',
-        { className: 'uh-cal' },
-        h(
-          'div',
-          { className: 'uh-wdLabels' },
-          WD.map(function (w: string, i: number) {
-            return h('span', { key: w }, i % 2 === 0 ? w : '')
-          }),
-        ),
+        { className: 'uh-cal', style: calStyle },
         h(
           'div',
           { className: 'uh-main' },
+          monthsRow,
           h(
             'div',
-            { className: 'uh-months', style: { '--uh-cols': range.columns.length } as any },
-            months.map(function (mm: string, i: number) { return h('span', { key: i }, mm) }),
-          ),
-          h(
-            'div',
-            { className: 'uh-cells', style: { '--uh-cols': range.columns.length } as any },
+            { className: 'uh-cells' },
+            // 行标与格子同 grid 同轨道：显式钉在第 1 列第 i+1 行 → 垂直中心由定义相等
+            // 极窄退化态（连行标槽都放不下）整组不渲染，避免无谓地撑高行
+            showLabels
+              ? WD.map(function (w: string, i: number) {
+                  return h('span', {
+                    key: 'wd' + i,
+                    className: 'uh-wdLabel',
+                    style: { gridColumn: '1', gridRow: String(i + 1) },
+                  }, i % 2 === 0 ? w : '')
+                })
+              : null,
             dayCells,
           ),
         ),

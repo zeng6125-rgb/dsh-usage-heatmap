@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-usage-heatmap",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "模型用量统计面板：累计 Token/峰值/最长会话/连续天数指标卡 + GitHub 风格 Token 热力图（日/周/累计切换）+ 活动洞察，数据来自本地 DSH 用量聚合",
   "type": "module",
   "main": "./lib/index.js",

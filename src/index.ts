@@ -41,12 +41,39 @@ let _stateInflight: Promise<any> | null = null
 /**
  * 持久化快照：每次扫描成功后把聚合结果整份落盘；宿主重启后首帧直接读快照
  * （<10ms），后台再增量扫描刷新——首开不再等全量解码。
+ * 快照内容 = payloadFrom() 的整份对象（title / days / metrics / source / updatedAt）。
  */
 const SNAPSHOT_FILE = path.join(os.homedir(), '.dsh', 'storages', 'usage-heatmap', 'last-state.json')
+/** 上次写入快照的“内容指纹”，供 saveSnapshot 判脏（见 snapshotContentKey）。 */
+let _lastSnapshotKey: string | null = null
+
+/**
+ * 快照内容指纹：剔除**每次扫描必然变化**的遥测字段后序列化。
+ * 剔除项：source.scanMs / source.updatedAt（时间与耗时）与 updatedAt（= source.updatedAt），
+ * 以及 source.decoded / source.cacheHits（描述“这次扫描怎么跑的”，不描述“统计是什么”）。
+ * 为何必须剔除：这些字段每次扫描都变，若参与比对则门控**永不生效**——实测全命中心跳下
+ * 每 5 分钟仍重写一次 last-state.json（source.decoded 1→0、cacheHits 80→81、scanMs 1786→40、
+ * updatedAt 变化，而 days/metrics 完全未变）。剔除后全命中心跳不再产生磁盘写。
+ * 语义代价（已知并接受）：宿主重启首帧从快照读到的 updatedAt 是“内容最后变化时刻”而非
+ * “最后一次扫描时刻”。HTTP /state 走内存缓存（payloadFrom 带新鲜 updatedAt），
+ * 客户端经轮询拿到的值不受影响；仅重启后后台刷新完成前的首帧短暂如此。
+ */
+function snapshotContentKey(data: any): string {
+  if (!data || typeof data !== 'object') return JSON.stringify(data)
+  const { updatedAt: _topUpdatedAt, source, ...rest } = data
+  if (source && typeof source === 'object') {
+    const { scanMs: _scanMs, updatedAt: _srcUpdatedAt, decoded: _decoded, cacheHits: _cacheHits, ...stableSource } = source
+    rest.source = stableSource
+  }
+  return JSON.stringify(rest)
+}
+
 function loadSnapshot(title: string): any | null {
   try {
-    const j = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'))
+    const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf8')
+    const j = JSON.parse(raw)
     if (j && j.days && j.metrics) {
+      _lastSnapshotKey = snapshotContentKey(j) // 记录在盘内容指纹，供 saveSnapshot 判脏
       j.title = title
       return j
     }
@@ -57,10 +84,15 @@ function loadSnapshot(title: string): any | null {
 }
 function saveSnapshot(data: any): void {
   try {
+    // 内容未变则不写盘（含 title / days / metrics / source.logs 等所有非遥测字段）
+    const key = snapshotContentKey(data)
+    if (key === _lastSnapshotKey) return
+    const json = JSON.stringify(data)
     fs.mkdirSync(path.dirname(SNAPSHOT_FILE), { recursive: true })
     const tmp = SNAPSHOT_FILE + '.' + Math.random().toString(36).slice(2, 8) + '.tmp' // 随机后缀防并发写互踩
-    fs.writeFileSync(tmp, JSON.stringify(data))
+    fs.writeFileSync(tmp, json)
     fs.renameSync(tmp, SNAPSHOT_FILE)
+    _lastSnapshotKey = key
   } catch {
     /* 快照写失败不影响功能 */
   }
