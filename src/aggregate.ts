@@ -295,21 +295,35 @@ interface UsageSample {
   cacheWriteTokens?: number
 }
 
-/** 镜像 dsh-llm lastAssistantStreamChunk(stream, 'usage')?.usage */
+/**
+ * 镜像 dsh-llm lastAssistantStreamChunk(stream, 'usage')?.usage
+ *
+ * ★ 判空用 `!= null` 而非 `!== undefined`：上游在"本次调用未上报 usage"时可能给出
+ *   **null**（而非省略字段），二者语义同为"无数据"。若只判 undefined，null 会穿过本函数
+ *   → 穿过 foldAssistantSample 的 `=== undefined` 守卫 → 在 bucketsFrom 里
+ *   `Number(u.inputTokens)` 抛 TypeError → 被 runScan 的 per-file try/catch 吞掉
+ *   → **整个会话文件被跳过**（该文件此前所有行的记账一并丢失）。
+ *   改为 `!= null` 后，null 与 undefined 走同一条"继续向前找"的路径，口径不变。
+ */
 function lastStreamUsage(stream: unknown): UsageSample | undefined {
   if (!Array.isArray(stream)) return undefined
   for (let i = stream.length - 1; i >= 0; i--) {
     const r = stream[i] as { type?: string; chunk?: { type?: string; usage?: UsageSample } } | undefined
-    if (r && r.type === 'chunk' && r.chunk && r.chunk.type === 'usage' && r.chunk.usage !== undefined) {
+    if (r && r.type === 'chunk' && r.chunk && r.chunk.type === 'usage' && r.chunk.usage != null) {
       return r.chunk.usage
     }
   }
   return undefined
 }
 
-/** 镜像 token-meter usageOf() */
+/**
+ * 镜像 token-meter usageOf()
+ *
+ * ★ 同上：`ev.data.usage != null` —— null 视同"未上报"，落到下方流尾兜底，
+ *   与 undefined 的行为完全一致（保持既有口径，不改变任何非 null 值的处理）。
+ */
 function usageOf(ev: any): UsageSample | undefined {
-  if (ev.type === 'assistant/message' && ev.data && ev.data.usage !== undefined) return ev.data.usage as UsageSample
+  if (ev.type === 'assistant/message' && ev.data && ev.data.usage != null) return ev.data.usage as UsageSample
   if (ev.type !== 'assistant/message' && ev.type !== 'assistant/attempt') return undefined
   return lastStreamUsage(ev.data?.stream)
 }
@@ -333,7 +347,9 @@ function bucketsEqual(a: Buckets, b: Buckets): boolean {
  * 保证两条路径不会各自演化出口径差异。
  */
 function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | undefined, turn: any, step: any): void {
-  if (sample === undefined || t <= 0) return
+  // `== null` 同时覆盖 undefined 与 null：上游把"未上报 usage"表达为 null 时，
+  // 与字段缺失同义处理（跳过本次记账），避免在 bucketsFrom 抛错导致整文件被丢弃。
+  if (sample == null || t <= 0) return
   const out = st.out
   const day = dayKey(t)
   const b = bucketsFrom(sample)
