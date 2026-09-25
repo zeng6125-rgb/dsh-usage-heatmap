@@ -21,6 +21,29 @@ var h = React.createElement
 var PLUGIN_ID = '@dsh-external/dsh-usage-heatmap'
 var API = '/@dsh-external/dsh-usage-heatmap/api'
 
+// 分区标题：settings.section 的 label 与「导航图标补丁」共用同一份文本
+var SECTION_LABEL = '模型用量统计'
+
+/**
+ * 设置页导航图标（热力图 3×3，供 CSS mask 使用）。
+ *
+ * **为什么需要补丁**（2026-09-25 查证）：
+ *  ① 宿主 `ui-settings-general` 的 `navIcon(id)` 是**按 id 硬编码**的图标映射，
+ *     源码注释原文：`unknown ids fall back to the settings gear` ⇒ 第三方分区只能拿到齿轮；
+ *  ② `settings.section` 槽位契约（client-runner 的 `registerOptions`）只有
+ *     `id` / `order` / `label`，**没有 icon 字段**；
+ *  ③ 借用已发布的 id（account / models / agent-presets / plugins / archived-sessions）会按契约
+ *     「reusing a shipped id puts you in THAT cell and replaces it」**顶替掉官方分区**，绝不可行。
+ * ⇒ 降级方案：JS 只给「我们这一行」加 `data-uh-nav-icon` 标记，CSS 隐藏宿主 svg 并用 mask 画出本图标。
+ *   `background:currentColor` ⇒ 自动跟随 hover/active 的主题色。
+ *   宿主 DOM 结构若变化，补丁**静默失效**（不影响面板本体功能）。
+ *
+ * 尺寸：网格墨迹 span 2..13 = **11px**——格子 3px（v3 定稿）+ 间隙 1px（v2 的值，
+ * 用户要求"间隙回之前的"）。全整数坐标，1x 下锐利。图标设计惯例就是 viewBox 四周
+ * 留呼吸边——官方齿轮与 dshmarket 的 block mark（实测 13×12）都是如此。
+ */
+var NAV_ICON_MASK = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cg fill='%23000'%3E%3Crect x='2' y='2' width='3' height='3' rx='0.8' opacity='.25'/%3E%3Crect x='6' y='2' width='3' height='3' rx='0.8' opacity='.45'/%3E%3Crect x='10' y='2' width='3' height='3' rx='0.8' opacity='.65'/%3E%3Crect x='2' y='6' width='3' height='3' rx='0.8' opacity='.45'/%3E%3Crect x='6' y='6' width='3' height='3' rx='0.8' opacity='.65'/%3E%3Crect x='10' y='6' width='3' height='3' rx='0.8' opacity='.85'/%3E%3Crect x='2' y='10' width='3' height='3' rx='0.8' opacity='.65'/%3E%3Crect x='6' y='10' width='3' height='3' rx='0.8' opacity='.85'/%3E%3Crect x='10' y='10' width='3' height='3' rx='0.8'/%3E%3C/g%3E%3C/svg%3E\")"
+
 // ---------------------------------------------------------------------------
 // 样式
 // ---------------------------------------------------------------------------
@@ -977,7 +1000,7 @@ function UsageHeatmapPanel(): any {
       h(
         'div',
         { className: 'uh-brand' },
-        h('strong', { className: 'uh-brandName' }, '模型用量统计'),
+        h('strong', { className: 'uh-brandName' }, SECTION_LABEL),
         h('p', { className: 'uh-brandDesc' }, '本地 DSH 会话日志聚合 · 累计 Token、活跃热力图与活动洞察'),
       ),
       h(
@@ -1125,6 +1148,118 @@ function UsageHeatmapPanel(): any {
 // 注册（仅设置面板分区）
 // ---------------------------------------------------------------------------
 
+/**
+ * 设置页导航图标补丁 —— 「认领自己那一行」。
+ *
+ * **为什么需要**（2026-09-25 查证）：
+ *  ① 宿主 `ui-settings-general` 的 `navIcon(id)` 是按 id **硬编码**的图标映射，
+ *     源码注释原文：`unknown ids fall back to the settings gear`；
+ *  ② `settings.section` 槽位契约（client-runner 的 `registerOptions`）只有
+ *     `id` / `order` / `label`，**没有 icon 字段** ⇒ 第三方分区一律戴齿轮；
+ *  ③ 借用已发布的 id（account / models / agent-presets / plugins / archived-sessions）
+ *     会按契约「reusing a shipped id puts you in THAT cell and replaces it」**顶替官方分区**，不可行。
+ *
+ * ⇒ 做法与生态既有插件一致（dshmarket 的 settings-nav-icon、dsh-better-sidebar、
+ *   dsh-skill-mcp-panel 都这么解决；dshmarket 源码注释亦点名了后两者）：
+ *   按**本插件自己的 label 文本**认领那一行 → 打标记 → 用独立样式表把外壳的齿轮换成自己的图标。
+ *   React 不会移除它不认识的属性 ⇒ 标记一旦打上即保持；locale 变化时外壳重渲染 label 文本，
+ *   observer 会重新认领，标记与文字不会脱节。
+ *
+ * 边界（刻意收窄）：
+ *  - 只标记「可见文本 === 本插件 label」的那一行；不碰任何外壳结构；
+ *  - 标记与样式表同属一个 effect ⇒ 随 fiber 一并清除；
+ *  - 宿主 DOM 结构若变化，补丁**静默失效**，不影响面板本体。
+ * 删除条件：`settings.section` 将来长出 `icon` 字段时，整个模块即可移除。
+ *
+ * 图标以 CSS `mask-image` 呈现（纯黑，mask 只读 alpha），可见色由
+ * `background-color: currentColor` 提供 ⇒ 自动跟随 hover / active / 禁用的主题色。
+ * 用 mask 而非替换 DOM，是为了不跟 React 的 children 协调打架（重渲染会还原 svg 子节点）。
+ */
+var NAV_ICON_MARKER = 'data-uh-nav-icon'
+
+/** 设置页导航行：外壳把每个 settings.section 条目渲染成面板 <nav> 内的一个 <button>。 */
+var NAV_ROW_SELECTOR = '[role="dialog"] nav button'
+
+/** 被标记那一行的样式：藏掉外壳回落的齿轮，画出本插件的热力图图标。 */
+function navIconCss(): string {
+  return [
+    '[' + NAV_ICON_MARKER + '] > svg { display: none; }',
+    '[' + NAV_ICON_MARKER + ']::before {',
+    "  content: '';",
+    '  flex: none;',
+    '  width: 16px;',
+    '  height: 16px;',
+    '  background-color: currentColor;',
+    '  -webkit-mask-image: ' + NAV_ICON_MASK + ';',
+    '  mask-image: ' + NAV_ICON_MASK + ';',
+    '  -webkit-mask-repeat: no-repeat;',
+    '  mask-repeat: no-repeat;',
+    '  -webkit-mask-position: center;',
+    '  mask-position: center;',
+    '  -webkit-mask-size: 16px 16px;',
+    '  mask-size: 16px 16px;',
+    '}',
+  ].join('\n')
+}
+
+/**
+ * 安装导航图标补丁，返回清理函数。
+ *
+ * 样式表**独立注入**（不复用面板的 ensureCss）——面板样式只在面板渲染时才注入，
+ * 而设置页导航在打开面板**之前**就要显示图标，时序对不上。
+ */
+function installSettingsNavIcon(): () => void {
+  if (typeof document === 'undefined' || !document.body) return function () {}
+
+  var tag = document.createElement('style')
+  tag.id = 'uh-usage-heatmap-nav-icon-style'
+  tag.textContent = navIconCss()
+  document.head.appendChild(tag)
+
+  var disposed = false
+  var scheduled = false
+
+  function sync(): void {
+    scheduled = false
+    if (disposed) return
+    var wanted = String(SECTION_LABEL || '').trim()
+    if (!wanted) return // 文本未就绪：什么都不标记，绝不因空串而认领整列
+    var rows = document.querySelectorAll(NAV_ROW_SELECTOR)
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
+      if (String(row.textContent || '').trim() === wanted) row.setAttribute(NAV_ICON_MARKER, '')
+      else row.removeAttribute(NAV_ICON_MARKER) // 认领是幂等的：别行的陈旧标记一并清掉
+    }
+  }
+
+  function schedule(): void {
+    if (scheduled || disposed) return
+    scheduled = true
+    var qm = typeof queueMicrotask === 'function' ? queueMicrotask : function (f: any) { setTimeout(f, 0) }
+    qm(sync)
+  }
+
+  sync()
+  var observer: any = null
+  try {
+    observer = new MutationObserver(schedule)
+    // subtree+characterData：设置页是挂到 body 的门户，且 locale 切换会改写 label 文本
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  } catch {
+    /* 观察失败：至少已同步过一次 */
+  }
+
+  return function () {
+    disposed = true
+    try { if (observer) observer.disconnect() } catch { /* ignore */ }
+    var marked = document.querySelectorAll('[' + NAV_ICON_MARKER + ']')
+    for (var i = 0; i < marked.length; i++) {
+      try { marked[i].removeAttribute(NAV_ICON_MARKER) } catch { /* ignore */ }
+    }
+    try { tag.remove() } catch { /* ignore */ }
+  }
+}
+
 function registerAll(ctx: any): () => void {
   var slots = ctx.slots
   var disposers: any[] = []
@@ -1139,11 +1274,14 @@ function registerAll(ctx: any): () => void {
         id: 'usage-heatmap-settings',
         order: 22,
         label: function () {
-          return '模型用量统计'
+          return SECTION_LABEL
         },
       }, UsageHeatmapPanel)
     }),
   )
+
+  // 导航图标补丁（齿轮 → 热力图）。放在分区注册之后：必须先有分区才有导航行。
+  disposers.push(installSettingsNavIcon())
 
   return function () {
     for (var i = 0; i < disposers.length; i++) {
