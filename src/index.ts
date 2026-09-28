@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-usage-heatmap — 模型用量统计面板（ui-panel 形态）。
+ * dsh-usage-heatmap — 模型用量统计面板（ui-panel 形态）。
  * host 侧：/api 前缀路由（SWR 状态）+ 汇总工具；client 侧：settings.section 面板。
  * 数据：src/aggregate.ts 解码耐久会话日志 + 孤儿投影缓存，按本地日聚合。
  */
@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { scan, type ScanResult } from './aggregate.js'
 
-export const name = '@dsh-external/dsh-usage-heatmap'
+export const name = 'dsh-usage-heatmap'
 export const inject = ['tools', 'webServer']
 
 export interface Config {
@@ -165,7 +165,7 @@ function summaryText(d: any): string {
 
 export function apply(ctx0: Context, config: Config): void {
   const ctx = ctx0 as HostContext
-  const API = '/@dsh-external/dsh-usage-heatmap/api'
+  const API = '/dsh-usage-heatmap/api'
   const title = config.title || DEFAULT_TITLE
 
   // 快照热启：先挂上上次扫描的落盘结果（首帧秒开），再后台增量扫描刷新
@@ -223,14 +223,14 @@ export function apply(ctx0: Context, config: Config): void {
           }
         },
       }),
-    '@dsh-external/dsh-usage-heatmap: api',
+    'dsh-usage-heatmap: api',
   )
 
   ctx.effect(
     () =>
       ctx.tools.register(
         defineTool({
-          name: '_dsh_external_dsh_usage_heatmap_status',
+          name: '_dsh_usage_heatmap_status',
           description:
             '模型用量统计面板：累计 Token/峰值/最长会话/连续天数指标卡 + GitHub 风格 Token 热力图（日/周/累计切换）+ 活动洞察，数据来自本地 DSH 用量聚合',
           parameters: {},
@@ -244,6 +244,6 @@ export function apply(ctx0: Context, config: Config): void {
           },
         }),
       ),
-    '@dsh-external/dsh-usage-heatmap: status tool',
+    'dsh-usage-heatmap: status tool',
   )
 }

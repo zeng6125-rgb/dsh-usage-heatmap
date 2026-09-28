@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-usage-heatmap — client 面板（settings.section 分区）。
+ * dsh-usage-heatmap — client 面板（settings.section 分区）。
  *
  * 布局：头部（标题/摘要/刷新）→ 9 宫指标卡（累计/今日/昨日/峰值日/最长会话/连续活跃/
  * 活跃天数/会话/子代理Token）→ GitHub 风格热力图（日/周/累计切换 + 月份轴 + tooltip）
@@ -18,8 +18,8 @@ declare const require: any
 var React = require('react')
 var h = React.createElement
 
-var PLUGIN_ID = '@dsh-external/dsh-usage-heatmap'
-var API = '/@dsh-external/dsh-usage-heatmap/api'
+var PLUGIN_ID = 'dsh-usage-heatmap'
+var API = '/dsh-usage-heatmap/api'
 
 // 分区标题：settings.section 的 label 与「导航图标补丁」共用同一份文本
 var SECTION_LABEL = '模型用量统计'
