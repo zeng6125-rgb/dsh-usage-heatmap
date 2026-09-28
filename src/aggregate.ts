@@ -15,12 +15,15 @@
  *     避免累计口径塌缩。
  *
  * 增量缓存：`~/.dsh/storages/usage-heatmap/cache.json`，按 (mtime,size) 判变更，
- * 只重扫变更文件；未变更文件复用缓存分桶。
+ * 只重扫变更文件；未变更文件复用缓存分桶。变更文件默认**增量续扫**：日志仅追加，
+ * 条目持久化「已消费帧边界 + 折叠状态快照」，只解码折叠尾部新帧（append 不变性
+ * 自证失败时回退全量折叠，自愈）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import zlib from 'node:zlib'
+import crypto from 'node:crypto'
 
 /** 一个会话某天的分桶：[uncachedInput, output, cacheRead, cacheWrite] */
 export type DayBuckets = Record<string, [number, number, number, number]>
@@ -40,6 +43,19 @@ export interface LogSessionEntry {
   days: DayBuckets
   turns: number
   steps: number
+  /**
+   * 增量续扫（会话日志仅追加，dsh-session-persistence-jsonl README：committed events are
+   * never rewritten）：r = 已消费的完整帧字节边界（下次只解折叠 r 之后的新帧；撕裂/未闭合
+   * 尾帧不计入消费，其起点即下次续扫的安全边界）。条目缺 r 或 r<0 = 不可续扫（旧缓存条目，
+   * 下次变更时全量折叠并补齐本组字段，自动升级）。
+   */
+  r?: number
+  /** 前缀 [0,r) sha256（append 不变性守卫，见 foldZstdSessionSteps seed 路径） */
+  h?: string
+  /** 折叠状态机 st.last 快照（跨扫描边界的同 turn+step usage 替换去重依赖它），null = 无 */
+  u?: { turn?: number; step?: number; day: string; b: [number, number, number, number] } | null
+  /** turnSet 快照（轮数计数；缺 = 旧条目，不可续扫） */
+  t?: number[]
 }
 
 export interface OrphanProjEntry {
@@ -218,10 +234,12 @@ const zstdDecompressSync: (b: Uint8Array) => Buffer =
 /**
  * 逐帧解码迭代器：帧头解析 → 撕裂尾部 resync → 单帧解码的唯一实现，
  * 由 decodeZstdJsonl（整段文本）与 foldZstdSession（流式折叠）共用。
- * yield 每个成功解出的帧；return 丢弃帧数（损坏/撕裂帧跳过，下次扫描再收敛）。
+ * yield 每个成功解出的帧；return {dropped, off}（损坏/撕裂帧跳过，下次扫描再收敛；
+ * off = 已消费的完整帧字节边界——撕裂尾部不计入，其起点即下次续扫的安全边界）。
+ * startOff 供增量续扫：从持久化的帧边界起只解尾部新帧（日志仅追加，前缀字节不变）。
  */
-function* iterDecodedFrames(buf: Buffer): Generator<Buffer, number, void> {
-  let off = 0
+function* iterDecodedFrames(buf: Buffer, startOff = 0): Generator<Buffer, { dropped: number; off: number }, void> {
+  let off = startOff
   let dropped = 0
   while (off + 4 <= buf.length) {
     const magic = buf.readUInt32LE(off)
@@ -259,7 +277,7 @@ function* iterDecodedFrames(buf: Buffer): Generator<Buffer, number, void> {
     if (decoded !== null) yield decoded
     off = end
   }
-  return dropped
+  return { dropped, off }
 }
 
 /**
@@ -279,7 +297,7 @@ export function decodeZstdJsonl(buf: Buffer): { text: string; dropped: number } 
     chunks.push(r.value.toString('utf8'))
     r = it.next()
   }
-  return { text: chunks.join(''), dropped: r.done ? r.value : 0 }
+  return { text: chunks.join(''), dropped: r.done ? r.value.dropped : 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,10 +417,39 @@ export function foldSessionLines(text: string): FoldedSession {
 
 // --- 折叠状态机（逐行推进；整段折叠与逐帧流式折叠共用同一实现，保证口径唯一） ---
 
+/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。 */
+type LastRef = { turn?: number; step?: number; day: string; b: Buckets } | null
+
 interface FoldState {
   out: FoldedSession
   turnSet: Set<number>
-  last: { turn: number; step: number; day: string; b: Buckets } | null
+  last: LastRef
+}
+
+/** 续扫快照（runScan 写入缓存条目、下次续扫恢复）：append-only 日志只折叠尾部新帧。 */
+interface FoldResume {
+  /** 已消费的完整帧字节边界（撕裂尾帧不计入；下次续解起点）。-1 = 本次未闭合尾部不可续（下次全量） */
+  r: number
+  /** 前缀 [0,r) 的 sha256（append 不变性守卫：改写/迁移/压缩转换 → 摘要不符回全量） */
+  h: string
+  /** st.last 快照（原始值；JSON 侧 undefined 键会消失，恢复时按缺省 undefined 处理） */
+  u: LastRef
+  /** turnSet 快照（轮数计数） */
+  t: number[]
+}
+
+/** 前缀 [0,end) 的 sha256 hex（end<=0 → 空串；end>buf 长度按长度截——越界意味着前缀被截，摘要必不符回全量）。 */
+function digestPrefix(buf: Buffer, end: number): string {
+  if (end <= 0) return ''
+  if (end > buf.length) end = buf.length
+  return crypto.createHash('sha256').update(buf.subarray(0, end)).digest('hex')
+}
+
+/** 深拷贝日分桶（续扫状态机在 days 上原地加减，不得共享引用污染缓存条目）。 */
+function cloneDays(d: DayBuckets): DayBuckets {
+  const o: DayBuckets = {}
+  for (const k of Object.keys(d)) o[k] = [d[k][0], d[k][1], d[k][2], d[k][3]]
+  return o
 }
 
 function newFoldState(): FoldState {
@@ -720,22 +767,37 @@ function finishFold(st: FoldState): FoldedSession {
   return st.out
 }
 
+/** 续扫种子：off = 上次已消费完整帧边界；st = 上次落盘的折叠状态（runScan 侧深拷贝构造）。 */
+export interface FoldSeed {
+  off: number
+  st: FoldState
+}
+
 /**
  * 逐帧折叠驱动：解码/折叠是同步 CPU 工作，按 sliceMs 时间片在帧之间**与行之间**主动让出
  * （yield 一次），调用方 await 一次 setImmediate 即可把控制权还给宿主事件循环。
  * 单帧 zstd 解码不可分割，故阻塞上限 ≈ 最大单帧解码耗时（本机实测 388ms / 11.7MB）；
  * 帧内按行让出，使 19MB / 8952 帧这类大文件不会一次同步跑满数秒（历史实测单次阻塞 3.2s）。
  * 时间片判定放在生成器内：只有真正到期才 yield，避免每行都产生一次 Promise。
+ *
+ * seed=null 全量折叠；seed 提供时从 seed.off 起只解折叠**尾部新帧**，状态从 seed.st 续跑
+ * （日志仅追加 ⇒ 字节级恒等；调用方须先用 digestPrefix 守卫前缀，改写即不符回全量）。
+ * 撕裂尾帧不计入消费边界 ⇒ resume.r 指向撕裂帧起点，其完整化由下次扫描续解收敛。
+ * 跨扫描边界的同 turn+step 替换去重靠 st.last（u 快照）续接；轮数计数靠 turnSet（t 快照）。
  */
-export function* foldZstdSessionSteps(buf: Buffer, sliceMs = 8): Generator<void, { folded: FoldedSession; dropped: number }, void> {
-  const st = newFoldState()
+export function* foldZstdSessionSteps(
+  buf: Buffer,
+  sliceMs = 8,
+  seed: FoldSeed | null = null,
+): Generator<void, { folded: FoldedSession; dropped: number; resume: FoldResume }, void> {
+  const st = seed ? seed.st : newFoldState()
   let sliceAt = Date.now() + sliceMs
   const due = (): boolean => {
     if (Date.now() < sliceAt) return false
     sliceAt = Date.now() + sliceMs
     return true
   }
-  const it = iterDecodedFrames(buf)
+  const it = iterDecodedFrames(buf, seed ? seed.off : 0)
   let carry = ''
   let r = it.next()
   while (!r.done) {
@@ -756,7 +818,17 @@ export function* foldZstdSessionSteps(buf: Buffer, sliceMs = 8): Generator<void,
     r = it.next()
   }
   if (carry !== '') foldLine(st, carry)
-  return { folded: finishFold(st), dropped: r.done ? r.value : 0 }
+  const ret = r.done ? r.value : { dropped: 0, off: seed ? seed.off : 0 }
+  // 撕裂尾行不参与续扫（writer 契约保证 append 批次以 \n 结尾 ⇒ 常态为空；若出现，
+  // 其半行不折入结果也不计入边界 ⇒ 下次续解补全，不重计）
+  const clean = carry === ''
+  return {
+    folded: finishFold(st),
+    dropped: ret.dropped,
+    resume: clean
+      ? { r: ret.off, h: digestPrefix(buf, ret.off), u: st.last, t: Array.from(st.turnSet) }
+      : { r: -1, h: '', u: null, t: [] },
+  }
 }
 
 /**
@@ -764,7 +836,7 @@ export function* foldZstdSessionSteps(buf: Buffer, sliceMs = 8): Generator<void,
  * 与 decodeZstdJsonl + foldSessionLines 的结果逐字节等价（81 文件实测零差异），
  * 但不构造整段 JSONL 文本、不 concat 大 Buffer，峰值内存与 GC 压力显著下降。
  */
-export function foldZstdSession(buf: Buffer): { folded: FoldedSession; dropped: number } {
+export function foldZstdSession(buf: Buffer) {
   const it = foldZstdSessionSteps(buf)
   let r = it.next()
   while (!r.done) r = it.next()
@@ -1197,13 +1269,38 @@ async function runScan(): Promise<ScanResult> {
     }
     try {
       const buf = fs.readFileSync(abs)
-      const steps = foldZstdSessionSteps(buf)
+      // 增量续扫判定：仅追加日志 ⇒ 前缀 [0,r) 字节不变（sha256 守卫）时，只解折叠 r 之后的
+      // 新帧并从上次折叠状态续跑。旧条目（无 r/h/u/t）与守卫不符（改写/迁移/撕裂 carry）
+      // 一律回全量折叠，完成后补齐续扫字段（自动升级）。
+      const resumable =
+        !!prev &&
+        typeof prev.r === 'number' && prev.r > 0 && prev.r <= buf.length &&
+        typeof prev.h === 'string' && prev.h.length === 64 &&
+        Array.isArray(prev.t) &&
+        digestPrefix(buf, prev.r) === prev.h
+      let seed: FoldSeed | null = null
+      if (resumable && prev) {
+        seed = {
+          off: prev.r as number,
+          st: {
+            out: {
+              id: prev.id, cwd: prev.cwd, title: prev.title,
+              first: prev.first, last: prev.last,
+              days: cloneDays(prev.days),
+              turns: 0, steps: prev.steps,
+            },
+            turnSet: new Set<number>(prev.t as number[]),
+            last: prev.u ? { turn: prev.u.turn, step: prev.u.step, day: prev.u.day, b: prev.u.b.slice() as Buckets } : null,
+          },
+        }
+      }
+      const steps = foldZstdSessionSteps(buf, 8, seed)
       let r = steps.next()
       while (!r.done) {
         await yieldIfDue()
         r = steps.next()
       }
-      const { folded, dropped } = r.value
+      const { folded, dropped, resume } = r.value
       droppedFrames += dropped
       cache.sessions[rel] = {
         path: rel,
@@ -1217,6 +1314,10 @@ async function runScan(): Promise<ScanResult> {
         days: folded.days,
         turns: folded.turns,
         steps: folded.steps,
+        r: resume.r,
+        h: resume.h,
+        u: resume.u ? { turn: resume.u.turn, step: resume.u.step, day: resume.u.day, b: [resume.u.b[0], resume.u.b[1], resume.u.b[2], resume.u.b[3]] } : null,
+        t: resume.t,
       }
       decoded += 1
       dirty = true

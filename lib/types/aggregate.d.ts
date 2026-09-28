@@ -15,6 +15,24 @@ export interface LogSessionEntry {
     days: DayBuckets;
     turns: number;
     steps: number;
+    /**
+     * 增量续扫（会话日志仅追加，dsh-session-persistence-jsonl README：committed events are
+     * never rewritten）：r = 已消费的完整帧字节边界（下次只解折叠 r 之后的新帧；撕裂/未闭合
+     * 尾帧不计入消费，其起点即下次续扫的安全边界）。条目缺 r 或 r<0 = 不可续扫（旧缓存条目，
+     * 下次变更时全量折叠并补齐本组字段，自动升级）。
+     */
+    r?: number;
+    /** 前缀 [0,r) sha256（append 不变性守卫，见 foldZstdSessionSteps seed 路径） */
+    h?: string;
+    /** 折叠状态机 st.last 快照（跨扫描边界的同 turn+step usage 替换去重依赖它），null = 无 */
+    u?: {
+        turn?: number;
+        step?: number;
+        day: string;
+        b: [number, number, number, number];
+    } | null;
+    /** turnSet 快照（轮数计数；缺 = 旧条目，不可续扫） */
+    t?: number[];
 }
 export interface OrphanProjEntry {
     /** projcache 文件名（裸 uuid） */
@@ -103,6 +121,7 @@ export declare function decodeZstdJsonl(buf: Buffer): {
     text: string;
     dropped: number;
 };
+type Buckets = [number, number, number, number];
 interface FoldedSession {
     id: string;
     cwd: string;
@@ -118,16 +137,50 @@ interface FoldedSession {
  * tools/byte-equiv.mjs 用它做「整段折叠 == 流式折叠」的交叉验证锚点。保留导出与语义。
  */
 export declare function foldSessionLines(text: string): FoldedSession;
+/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。 */
+type LastRef = {
+    turn?: number;
+    step?: number;
+    day: string;
+    b: Buckets;
+} | null;
+interface FoldState {
+    out: FoldedSession;
+    turnSet: Set<number>;
+    last: LastRef;
+}
+/** 续扫快照（runScan 写入缓存条目、下次续扫恢复）：append-only 日志只折叠尾部新帧。 */
+interface FoldResume {
+    /** 已消费的完整帧字节边界（撕裂尾帧不计入；下次续解起点）。-1 = 本次未闭合尾部不可续（下次全量） */
+    r: number;
+    /** 前缀 [0,r) 的 sha256（append 不变性守卫：改写/迁移/压缩转换 → 摘要不符回全量） */
+    h: string;
+    /** st.last 快照（原始值；JSON 侧 undefined 键会消失，恢复时按缺省 undefined 处理） */
+    u: LastRef;
+    /** turnSet 快照（轮数计数） */
+    t: number[];
+}
+/** 续扫种子：off = 上次已消费完整帧边界；st = 上次落盘的折叠状态（runScan 侧深拷贝构造）。 */
+export interface FoldSeed {
+    off: number;
+    st: FoldState;
+}
 /**
  * 逐帧折叠驱动：解码/折叠是同步 CPU 工作，按 sliceMs 时间片在帧之间**与行之间**主动让出
  * （yield 一次），调用方 await 一次 setImmediate 即可把控制权还给宿主事件循环。
  * 单帧 zstd 解码不可分割，故阻塞上限 ≈ 最大单帧解码耗时（本机实测 388ms / 11.7MB）；
  * 帧内按行让出，使 19MB / 8952 帧这类大文件不会一次同步跑满数秒（历史实测单次阻塞 3.2s）。
  * 时间片判定放在生成器内：只有真正到期才 yield，避免每行都产生一次 Promise。
+ *
+ * seed=null 全量折叠；seed 提供时从 seed.off 起只解折叠**尾部新帧**，状态从 seed.st 续跑
+ * （日志仅追加 ⇒ 字节级恒等；调用方须先用 digestPrefix 守卫前缀，改写即不符回全量）。
+ * 撕裂尾帧不计入消费边界 ⇒ resume.r 指向撕裂帧起点，其完整化由下次扫描续解收敛。
+ * 跨扫描边界的同 turn+step 替换去重靠 st.last（u 快照）续接；轮数计数靠 turnSet（t 快照）。
  */
-export declare function foldZstdSessionSteps(buf: Buffer, sliceMs?: number): Generator<void, {
+export declare function foldZstdSessionSteps(buf: Buffer, sliceMs?: number, seed?: FoldSeed | null): Generator<void, {
     folded: FoldedSession;
     dropped: number;
+    resume: FoldResume;
 }, void>;
 /**
  * 流式折叠：逐帧解码 → 按 '\n' 切行（跨帧 carry）→ 逐行折叠。
@@ -137,6 +190,7 @@ export declare function foldZstdSessionSteps(buf: Buffer, sliceMs?: number): Gen
 export declare function foldZstdSession(buf: Buffer): {
     folded: FoldedSession;
     dropped: number;
+    resume: FoldResume;
 };
 /** 串行化：并发调用共享同一次扫描。 */
 export declare function scan(): Promise<ScanResult>;
