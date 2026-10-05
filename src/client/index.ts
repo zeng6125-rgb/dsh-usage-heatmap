@@ -64,7 +64,7 @@ var CSS = [
   '.uh-page::-webkit-scrollbar-track{background:transparent;margin:16px 0}',
   '.uh-page::-webkit-scrollbar-thumb{background:transparent;border-radius:99px}',
   '.uh-page.uh-scrolling::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2,rgba(0,0,0,.18))}',
-  '.uh-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 0 14px;border-bottom:1px solid var(--dsw-alias-border-default,#e5e5e5);flex-wrap:wrap}',
+  '.uh-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 10px;border-bottom:1px solid var(--dsw-alias-border-default,#e5e5e5);flex-wrap:wrap}',
   '.uh-brand{display:flex;flex-direction:column;min-width:0}',
   '.uh-brandName{font-size:17px;font-weight:600;line-height:24px;color:var(--dsw-alias-label-primary,#1a1a1a)}',
   '.uh-brandDesc{margin:2px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#555)}',
@@ -72,7 +72,7 @@ var CSS = [
   '.uh-sum{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums}',
 
   /* 卡片：扁平清爽，且不做任何 hover 反馈——大卡片 hover 切换会让整卡子树重绘，滚动时是掉帧源 */
-  '.uh-card{position:relative;border:1px solid var(--dsw-alias-border-l2,#f0f1f3);border-radius:10px;padding:12px 14px;background:var(--dsw-alias-bg-layer-3,#fff);box-shadow:0 1px 2px rgb(31 35 41 / 2%)}',
+  '.uh-card{position:relative;border:1px solid var(--dsw-alias-border-l2,#f0f1f3);border-radius:10px;padding:10px 12px;background:var(--dsw-alias-bg-layer-3,#fff);box-shadow:0 1px 2px rgb(31 35 41 / 2%)}',
   /* 贴满：内容短于视口时由最后一张卡（活动洞察）吸收剩余高度，数据源 note 沉底。
      ★ 必须 flex-shrink:0（写法 1 0 auto）：min-height:0 + shrink 会允许它在内容溢出时被
        flex 收缩压瘪（10-05 实测 910x428 下被压到 26px，洞察列表溢出到卡片外、盖过 note）。
@@ -80,16 +80,16 @@ var CSS = [
   '.uh-fill{flex:1 0 auto}',
 
   /* 指标卡片行 */
-  '.uh-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(164px,1fr));gap:10px;margin:14px 0}',
+  '.uh-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(164px,1fr));gap:8px;margin:10px 0}',
   '.uh-metricLabel{display:flex;align-items:center;gap:7px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#646a73)}',
   '.uh-metricIcon{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:4px;font-size:10px;line-height:1;flex:none;color:#1677ff;background:rgb(22 119 255 / 9%)}',
-  '.uh-metricValue{margin-top:7px;font-size:20px;font-weight:650;line-height:26px;letter-spacing:-.01em;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.uh-metricSub{margin-top:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.uh-metricValue{margin-top:4px;font-size:20px;font-weight:650;line-height:26px;letter-spacing:-.01em;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.uh-metricSub{margin-top:3px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-metricSub b{font-weight:600;color:var(--dsw-alias-label-secondary,#646a73)}',
 
   /* 热力图卡片 */
-  '.uh-section{margin-bottom:14px}',
-  '.uh-sectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}',
+  '.uh-section{margin-bottom:10px}',
+  '.uh-sectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}',
   '.uh-sectionTitle{margin:0;font-size:14px;line-height:20px;font-weight:640;color:var(--dsw-alias-label-primary,#1f2329)}',
   '.uh-sectionDesc{margin:2px 0 0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e)}',
   '.uh-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap}',
@@ -181,7 +181,9 @@ var CSS = [
   '.uh-tip em{font-style:normal;color:rgb(255 255 255 / 65%);font-size:11px}',
 
   /* 洞察列表 */
-  '.uh-insights{display:grid;gap:9px}',
+  /* 洞察列表：auto-fit 两栏（面板 <~620px 自动回单栏）。单栏 8 条 ~223px 是面板超一屏的主因；
+     align-content:start 防止 uh-fill 拉伸卡片时行距被撑开 */
+  '.uh-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:6px 22px;align-content:start}',
   '.uh-insight{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#1f2329)}',
   '.uh-insDot{flex:none;width:7px;height:7px;border-radius:50%;background:#1677ff;margin-top:6px}',
   '.uh-insight[data-k="peak"] .uh-insDot{background:#f59e0b}',
@@ -200,7 +202,7 @@ var CSS = [
   '.uh-btn[data-kind="primary"]{background:#1677ff;color:#fff;border-color:#1677ff}',
   '.uh-btn[data-kind="primary"]:hover:not(:disabled){background:#0f5fce;border-color:#0f5fce;color:#fff}',
   '.uh-btn:disabled{opacity:.5;cursor:default}',
-  '.uh-note{margin-top:2px;padding:9px 11px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#eef0f3);background:var(--dsw-alias-bg-layer-2,#f7f8fa);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#646a73)}',
+  '.uh-note{margin-top:2px;padding:7px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#eef0f3);background:var(--dsw-alias-bg-layer-2,#f7f8fa);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#646a73)}',
   '.uh-note[data-tone="warn"]{border-color:color-mix(in srgb,#e37400 35%,var(--dsw-alias-border-l2,#eef0f3));background:rgb(227 116 0 / 8%);color:#b45309}',
   '.uh-empty{padding:26px 8px;text-align:center;font-size:13px;color:var(--dsw-alias-label-tertiary,#8f959e)}',
 ].join('\n')
