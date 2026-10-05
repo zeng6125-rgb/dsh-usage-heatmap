@@ -182,9 +182,8 @@ var CSS = [
   '.uh-tip em{font-style:normal;color:rgb(255 255 255 / 65%);font-size:11px}',
 
   /* 洞察列表 */
-  /* 洞察列表：auto-fit 两栏（面板 <~620px 自动回单栏）。单栏 8 条 ~223px 是面板超一屏的主因；
-     align-content:start 防止 uh-fill 拉伸卡片时行距被撑开 */
-  '.uh-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:6px 22px;align-content:start}',
+  /* 洞察列表：单列（10-05 用户选定，双列密度方案被否——观感优先，内容超高时 .uh-page 内部滚动） */
+  '.uh-insights{display:grid;gap:9px}',
   '.uh-insight{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#1f2329)}',
   '.uh-insDot{flex:none;width:7px;height:7px;border-radius:50%;background:#1677ff;margin-top:6px}',
   '.uh-insight[data-k="peak"] .uh-insDot{background:#f59e0b}',
