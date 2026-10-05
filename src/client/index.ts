@@ -54,12 +54,13 @@ var CSS = [
      will-change:scroll-position → 行为走合成器线程，实测 21ms→6.05ms、超标帧 56/60→0/60。
      ★ 勿加 scrollbar-width/scrollbar-color：非 auto 会让全部 ::-webkit-scrollbar* 规则失效。
      ★ 勿加 contain:layout paint：实测 23.95ms/57-of-60 反而更差。
-     ★ 高度模型（2026-10-05 vfill 探针实测，Desktop 0.4.4 / dsh 0.2.0-rc.2）：
-       宿主滚动区 = .VOzbGW_options（flex 定高，内容盒 = 视口-263-24），其子经 display:contents
-       透传，.uh-page 的百分比包含块即 options 内容盒。height:100% → 精确贴满窗口底沿、
-       单层滚动条（旧 max-height:100vh-150px 在 819 高视口给 669 > 可用 532 → 双滚动条；
-       内容短时又缩出底部空白）。max-height 保留作宿主 auto 高布局的回退上限。 */
-  '.uh-page{display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#1f2329);box-sizing:border-box;touch-action:pan-y;height:100%;max-height:calc(100vh - 150px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:auto;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;will-change:scroll-position}',
+     ★ 高度模型（2026-10-05 vfill 探针 + 用户实测，Desktop 0.4.6 / dsh 0.2.0-rc.2）：
+       宿主滚动区 = .VOzbGW_options（flex 定高），其子经 display:contents 透传，
+       .uh-page 的百分比包含块即 options 内容盒。height:100% → 精确贴满窗口底沿、单层滚动条。
+       回退上限 max-height:calc(100vh - 85px)：带 222px 导航网格的布局（探针环境）100% 先生效、
+       上限不绑定；用户的无导航弹窗布局面板上方 chrome ≈85px，旧值 150px 会把面板压短 ~65px
+       再造底部空白（2026-10-05 用户亲自定位）。 */
+  '.uh-page{display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#1f2329);box-sizing:border-box;touch-action:pan-y;height:100%;max-height:calc(100vh - 85px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:auto;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;will-change:scroll-position}',
   '.uh-page::-webkit-scrollbar{width:6px}',
   '.uh-page::-webkit-scrollbar-track{background:transparent;margin:16px 0}',
   '.uh-page::-webkit-scrollbar-thumb{background:transparent;border-radius:99px}',
