@@ -73,8 +73,11 @@ var CSS = [
 
   /* 卡片：扁平清爽，且不做任何 hover 反馈——大卡片 hover 切换会让整卡子树重绘，滚动时是掉帧源 */
   '.uh-card{position:relative;border:1px solid var(--dsw-alias-border-l2,#f0f1f3);border-radius:10px;padding:12px 14px;background:var(--dsw-alias-bg-layer-3,#fff);box-shadow:0 1px 2px rgb(31 35 41 / 2%)}',
-  /* 贴满：内容短于视口时，由最后一张卡（活动洞察）吸收剩余高度，卡片底沿抵住窗口（数据源 note 自然沉底） */
-  '.uh-fill{flex:1 1 auto;min-height:0}',
+  /* 贴满：内容短于视口时由最后一张卡（活动洞察）吸收剩余高度，数据源 note 沉底。
+     ★ 必须 flex-shrink:0（写法 1 0 auto）：min-height:0 + shrink 会允许它在内容溢出时被
+       flex 收缩压瘪（10-05 实测 910x428 下被压到 26px，洞察列表溢出到卡片外、盖过 note）。
+     ★ 只 grow 不 shrink：有富余就长满，没富余就保持自然高度交给 .uh-page 滚动。 */
+  '.uh-fill{flex:1 0 auto}',
 
   /* 指标卡片行 */
   '.uh-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(164px,1fr));gap:10px;margin:14px 0}',
