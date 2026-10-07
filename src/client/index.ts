@@ -183,18 +183,18 @@ var CSS = [
 
   /* 洞察列表 */
   /* 模型消耗卡：柱状图（10-08 用户指定；每列=值标签+柱+短名，悬浮 title 带全名/分桶/占比） */
-  '.uh-modelChart{margin-top:2px;display:flex;align-items:stretch;gap:6px}',
+  '.uh-modelChart{margin-top:2px;display:flex;align-items:stretch;gap:6px;padding-top:20px}',
   '.uh-modelCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px}',
-  '.uh-modelColVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}',
-  '.uh-modelColTrack{height:120px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
-  '.uh-modelColBar{width:34px;border-radius:4px 4px 0 0;min-height:2px}',
+  '.uh-modelColVal{position:absolute;left:0;right:0;text-align:center;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}',
+  '.uh-modelColTrack{position:relative;height:150px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
+  '.uh-modelColBar{width:44px;border-radius:4px 4px 0 0;min-height:2px}',
   '.uh-modelColName{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#646a73);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
   /* 按日期堆叠多色柱（横坐标=日，柱内段=模型；段高按占比 flex-grow 分配） */
   '.uh-modelStack{margin-top:2px;display:flex;align-items:stretch;gap:3px}',
   '.uh-modelDayCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px}',
-  '.uh-modelDayTrack{height:120px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
-  '.uh-modelDayBar{width:70%;max-width:26px;display:flex;flex-direction:column-reverse;border-radius:3px 3px 0 0;overflow:hidden}',
+  '.uh-modelDayTrack{height:150px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
+  '.uh-modelDayBar{width:80%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:3px 3px 0 0;overflow:hidden}',
   '.uh-modelDaySeg{width:100%;flex-basis:0;min-height:0;transition:opacity .12s ease,filter .12s ease}',
   /* 悬停：段高亮 + 同柱其他段变淡（聚焦当前模型）；按模型柱同理 */
   '.uh-modelDayBar:hover .uh-modelDaySeg:not(:hover){opacity:.45}',
@@ -206,7 +206,8 @@ var CSS = [
   '.uh-modelColBar:hover{filter:brightness(.88)}',
   '.uh-modelLegendItem{cursor:default}',
   '.uh-modelDayName{font-size:10px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;white-space:nowrap}',
-  '.uh-modelLegend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px}',
+  /* 图例整块居中（条目内部仍左对齐：点+文字），左右留白对称（10-08 用户指定） */
+  '.uh-modelLegend{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;margin-top:8px}',
   '.uh-modelLegendItem{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,#646a73)}',
   '.uh-modelLegendDot{width:8px;height:8px;border-radius:2px;flex:none}',
 
@@ -1217,8 +1218,10 @@ function UsageHeatmapPanel(): any {
           ]))
           mItems.push(
             h('div', colProps,
-              h('div', { className: 'uh-modelColVal' }, fmtTokens(row.total)),
-              h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mColor(row.name) } })),
+              h('div', { className: 'uh-modelColTrack' },
+                h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mColor(row.name) } }),
+                h('div', { className: 'uh-modelColVal', style: { bottom: 'calc(' + hPct + ' + 4px)' } }, fmtTokens(row.total)),
+              ),
               h('div', { className: 'uh-modelColName' }, mLabel(row.name)),
             ),
           )
@@ -1231,8 +1234,10 @@ function UsageHeatmapPanel(): any {
           ]))
           mItems.push(
             h('div', restProps,
-              h('div', { className: 'uh-modelColVal' }, fmtTokens(mRestT)),
-              h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } })),
+              h('div', { className: 'uh-modelColTrack' },
+                h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } }),
+                h('div', { className: 'uh-modelColVal', style: { bottom: 'calc(' + Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '% + 4px)' } }, fmtTokens(mRestT)),
+              ),
               h('div', { className: 'uh-modelColName' }, '其他 ' + mRestN + ' 个'),
             ),
           )
