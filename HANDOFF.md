@@ -26,9 +26,9 @@
 
 ## 3. 发布状态
 
-- GitHub：**master `4807907` 已推送**（10-08：死代码清理+归档 dayModels 修复）；Releases v0.1.0→v0.1.1→**v0.1.2（Latest，10-05）**，资产一律 `dsh-usage-heatmap.tgz`（**版本无关命名，不得带版本号**——发版需把 npm pack 产物复制成无版本名再 gh 挂）。0.1.2 内容：面板高度自适应修复链 `ce59d32`（height:100% 贴满）→`edfe64f`（uh-fill 只 grow 不 shrink）→`8b0848f`（纵向密度压缩）→`ae94bd3`（**max-height 上限 150→85px，用户亲自定位：其 0.4.6 无导航弹窗 chrome 仅 ~85px**）→`20a0fd3`（洞察列表保持单列——双列密度方案用户否决，观感优先，超高时面板内部滚动）
-- **0.1.3 攒着未发**（10-07 用户指示「先不发，攒着先」）：已积累 `09033de`（最活跃星期洞察附大头日期证据）+ `f28cdef`（按模型统计 token 消耗 + 指标卡图标 18px）。发版时走常规链：bump → `npm run build:client` + host `npx tsc -p tsconfig.json` → pack 复制成无版本名 → gh release + npm publish
-- npm：**`dsh-usage-heatmap@0.1.2` 已发布**（10-05，账号 jiaszeng，latest 标签）；本机 `.npmrc` 已配 token，`npm whoami` 绿。历史下载：0.1.0 = 335（09-04~10-03）
+- GitHub：**master `1eb01be` 已推送**（10-08：chore(release): 0.1.3 + tag v0.1.3）；Releases v0.1.0→v0.1.1→v0.1.2→**v0.1.3（Latest，10-08）**，资产一律 `dsh-usage-heatmap.tgz`（**版本无关命名，不得带版本号**——发版需把 npm pack 产物复制成无版本名再 gh 挂）。0.1.2 内容：面板高度自适应修复链 `ce59d32`（height:100% 贴满）→`edfe64f`（uh-fill 只 grow 不 shrink）→`8b0848f`（纵向密度压缩）→`ae94bd3`（**max-height 上限 150→85px，用户亲自定位：其 0.4.6 无导航弹窗 chrome 仅 ~85px**）→`20a0fd3`（洞察列表保持单列——双列密度方案用户否决，观感优先，超高时面板内部滚动）
+- **0.1.3 已发（10-08，用户口令 m01999「发吧」+ m02006「可以」批准描述）**：17 commits（v0.1.2..1de9e16）+ bump `1eb01be`。内容=模型消耗卡（双版式：按日期堆叠多色柱默认/按模型垂直柱；悬停三行明细+图例联动高亮；差额行诚实披露）+ 图标 18px + 星期洞察大头日期证据 + 归档 dayModels 精确重建修复 + Windows 字重 550 割裂修复 + 性能画像/字节路径回退/死代码清理。release notes 曾落盘 release-notes-0.1.3.md（gh --notes-file 用）后删，内容在 release 页
+- npm：**`dsh-usage-heatmap@0.1.3` 已发布**（10-08 03:55Z，账号 jiaszeng，latest 标签）。**npm publish 是异步的**：PUT 返回 **202 Accepted**（非 201），registry 可见延迟实测 ~4min（publish 19:51:23Z → versions 出现 19:55:41Z）——发布后 `npm view` 短时仍旧版属正常，勿误判失败重发；核实看 debug log `http fetch PUT 202` + exit 0，或等 ~5min 再查。历史下载：0.1.0 = 335（09-04~10-03）
 - **内核适配（0.1.1 变更点）**：peerDeps `@deepseek-ai/dsh-tools` / `@deepseek-ai/dsh-client-ui-slots` 追加 `|| >=0.2.0-rc.1 <2`（本机宿主 Desktop 0.4.4 捆绑 0.2.0-rc.2；node-semver 预发布规则下旧段 `<2` 匹不上 0.2.0-rc.2 预发布，必须加段；0.1.x 段保留向后兼容）。typecheck 0 错 + 热重载 [active] + 不变量 sum==totalTokens（21,236,180,567）均实测通过
 - 市场：PR #5838 **已合并**（2026-09-26）；probe 已于 10-05 写入 npm 字段（待办②完结）；0.1.1 上 npm 后 version/downloads 下一轮日更自动跟随
 - 构建链：`dev_build_plugin(D:\workroom\dsh-usage-heatmap)` → `dev_reload_package(usage-heatmap)`；typecheck `npm run typecheck`
