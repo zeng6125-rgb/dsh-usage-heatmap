@@ -195,7 +195,16 @@ var CSS = [
   '.uh-modelDayCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px}',
   '.uh-modelDayTrack{height:120px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
   '.uh-modelDayBar{width:70%;max-width:26px;display:flex;flex-direction:column-reverse;border-radius:3px 3px 0 0;overflow:hidden}',
-  '.uh-modelDaySeg{width:100%;flex-basis:0;min-height:0}',
+  '.uh-modelDaySeg{width:100%;flex-basis:0;min-height:0;transition:opacity .12s ease,filter .12s ease}',
+  /* 悬停：段高亮 + 同柱其他段变淡（聚焦当前模型）；按模型柱同理 */
+  '.uh-modelDayBar:hover .uh-modelDaySeg:not(:hover){opacity:.45}',
+  '.uh-modelDaySeg:hover{filter:brightness(.9)}',
+  /* 图例悬停联动：非目标模型的段整体变淡 */
+  '.uh-modelStack:not([data-hl="-1"]) .uh-modelDaySeg{opacity:.22}',
+  '.uh-modelStack:not([data-hl="-1"]) .uh-modelDaySeg[data-on="1"]{opacity:1}',
+  '.uh-modelColBar{transition:filter .12s ease}',
+  '.uh-modelColBar:hover{filter:brightness(.88)}',
+  '.uh-modelLegendItem{cursor:default}',
   '.uh-modelDayName{font-size:10px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;white-space:nowrap}',
   '.uh-modelLegend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px}',
   '.uh-modelLegendItem{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,#646a73)}',
@@ -410,6 +419,65 @@ function pct(part: number, whole: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// tooltip 单例（热力图 + 模型卡共用：脱离 React 渲染，悬停/移动零重渲染）
+// ---------------------------------------------------------------------------
+
+var _tipEl: any = null
+var _tipRaf = 0
+var _tipEv: any = null
+
+function ensureTip(): any {
+  var el = _tipEl
+  if (!el || !el.parentNode) {
+    el = document.createElement('div')
+    el.className = 'uh-tip'
+    el.style.display = 'none'
+    document.body.appendChild(el)
+    _tipEl = el
+  }
+  return el
+}
+function escapeHtml(s: string): string {
+  var map: any = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
+  return String(s).replace(/[&<>"]/g, function (c: string) { return map[c] || c })
+}
+function placeTip(): void {
+  _tipRaf = 0
+  var el = _tipEl
+  if (el && _tipEv) {
+    el.style.left = _tipEv.clientX + 'px'
+    el.style.top = _tipEv.clientY + 'px'
+  }
+}
+function showTip(ev: any, lines: string[]): void {
+  var el = ensureTip()
+  el.innerHTML =
+    '<div><b>' + escapeHtml(String(lines[0] ?? '')) + '</b></div>' +
+    (lines[1] != null ? '<div>' + escapeHtml(String(lines[1])) + '</div>' : '') +
+    (lines[2] != null ? '<em>' + escapeHtml(String(lines[2])) + '</em>' : '')
+  el.style.display = 'block'
+  _tipEv = ev
+  if (!_tipRaf) _tipRaf = requestAnimationFrame(placeTip)
+}
+function moveTip(ev: any): void {
+  if (!_tipEl) return
+  _tipEv = ev
+  if (!_tipRaf) _tipRaf = requestAnimationFrame(placeTip)
+}
+function hideTip(): void {
+  if (_tipEl) _tipEl.style.display = 'none'
+}
+
+/** 悬停三件套工厂：lines 在调用处立即求值，避免 var 循环变量闭包陷阱 */
+function mkTipHandlers(lines: string[]): any {
+  return {
+    onMouseEnter: function (ev: any) { showTip(ev, lines) },
+    onMouseMove: moveTip,
+    onMouseLeave: function () { hideTip() },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 指标卡片
 // ---------------------------------------------------------------------------
 
@@ -548,59 +616,7 @@ function HeatmapCard(props: any): any {
   var mode = _mode[0]
   var setMode = _mode[1]
 
-  // tooltip：脱离 React 渲染，直接操作 DOM——悬停/移动零重渲染（300+ 格子不再跟着鼠标move重画）
-  var tipElRef = React.useRef(null)
-  React.useEffect(function () {
-    return function () {
-      var el: any = tipElRef.current
-      if (el && el.parentNode) el.parentNode.removeChild(el)
-      tipElRef.current = null
-    }
-  }, [])
-  function ensureTip(): any {
-    var el: any = tipElRef.current
-    if (!el || !el.parentNode) {
-      el = document.createElement('div')
-      el.className = 'uh-tip'
-      el.style.display = 'none'
-      document.body.appendChild(el)
-      tipElRef.current = el
-    }
-    return el
-  }
-  function escapeHtml(s: string): string {
-    var map: any = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
-    return String(s).replace(/[&<>"]/g, function (c: string) { return map[c] || c })
-  }
-  var tipRaf = 0
-  var tipEv: any = null
-  function placeTip(): void {
-    tipRaf = 0
-    var el: any = tipElRef.current
-    if (el && tipEv) {
-      el.style.left = tipEv.clientX + 'px'
-      el.style.top = tipEv.clientY + 'px'
-    }
-  }
-  function showTip(ev: any, lines: string[]): void {
-    var el = ensureTip()
-    el.innerHTML =
-      '<div><b>' + escapeHtml(String(lines[0] ?? '')) + '</b></div>' +
-      (lines[1] != null ? '<div>' + escapeHtml(String(lines[1])) + '</div>' : '') +
-      (lines[2] != null ? '<em>' + escapeHtml(String(lines[2])) + '</em>' : '')
-    el.style.display = 'block'
-    tipEv = ev
-    if (!tipRaf) tipRaf = requestAnimationFrame(placeTip)
-  }
-  function moveTip(ev: any): void {
-    if (!tipElRef.current) return
-    tipEv = ev
-    if (!tipRaf) tipRaf = requestAnimationFrame(placeTip)
-  }
-  function hideTip(): void {
-    var el: any = tipElRef.current
-    if (el) el.style.display = 'none'
-  }
+  // tooltip：模块级单例（见文件前部 mkTipHandlers/ensureTip），本组件不再自持
 
   var hasData = !!(m.firstDay && Object.keys(days).length)
 
@@ -1000,8 +1016,10 @@ function UsageHeatmapPanel(): any {
   var m = data ? data.metrics : null
   var days = (data && data.days) || {}
   var src = (data && data.source) || null
-  /* 模型卡版式（按模型 / 按日期堆叠）。useState 必须在组件顶层无条件调用 */
-  var modelModeS = React.useState('model')
+  /* 模型卡版式（按日期堆叠 / 按模型）。useState 必须在组件顶层无条件调用。默认按日期（10-08 用户指定） */
+  var modelModeS = React.useState('day')
+  /* 图例悬停高亮：-1=无；0..7=top8 排名；8=其他 */
+  var hlS = React.useState(-1)
 
   // 滚动条按需显隐（hy-proxy 同款）：滚动中才给 thumb 上色；rAF 节流 + 捕获阶段
   var pageRef = React.useRef(null)
@@ -1166,10 +1184,24 @@ function UsageHeatmapPanel(): any {
       var mColorOf: Record<string, string> = {}
       for (var pc = 0; pc < mTop.length; pc++) mColorOf[mTop[pc].name] = mPalette[pc % mPalette.length]
       var mColor = function (name: string): string { return mColorOf[name] || 'rgb(31 35 41 / 14%)' }
+      /* 排名映射（图例联动高亮用）：top8=0..7，其余=8 */
+      var mRankOf: Record<string, number> = {}
+      for (var rk = 0; rk < mTop.length; rk++) mRankOf[mTop[rk].name] = rk
+      var mRank = function (name: string): number { return name in mRankOf ? mRankOf[name] : 8 }
       var mPct = function (t: number): string { return Math.round((t / (modelSum || 1)) * 100) + '%' }
       var mShort = function (full: string): string { var i = full.indexOf('/'); return i >= 0 ? full.slice(i + 1) : full }
+      /* 短名碰撞感知：不同 provider 同名模型（如 deepseek-official 与 hy3 的 deepseek-v4.1-flash）回退显示全名 */
+      var mShortCount: Record<string, number> = {}
+      for (var sc = 0; sc < modelRows.length; sc++) {
+        var sn0 = mShort(modelRows[sc].name)
+        mShortCount[sn0] = (mShortCount[sn0] || 0) + 1
+      }
+      var mLabel = function (full: string): string { var sn = mShort(full); return mShortCount[sn] > 1 ? full : sn }
+      var mTotOf = function (name: string): number { var b = modelMap[name]; return b ? b[0] + b[1] + b[2] + b[3] : 0 }
       var modelMode = modelModeS[0]
       var setModelMode = modelModeS[1]
+      var hl = hlS[0]
+      var setHl = hlS[1]
 
       var mChartBody: any = null
       if (modelMode === 'model') {
@@ -1177,26 +1209,28 @@ function UsageHeatmapPanel(): any {
         for (var mi2 = 0; mi2 < mTop.length; mi2++) {
           var row = mTop[mi2]
           var hPct = Math.max(1.5, (row.total / mMax) * 100).toFixed(2) + '%'
+          var colProps: any = { key: 'm' + mi2, className: 'uh-modelCol' }
+          Object.assign(colProps, mkTipHandlers([
+            row.name,
+            fmtTokens(row.total) + ' tokens · ' + mPct(row.total) + '（占已归属合计）',
+            '未缓存入 ' + fmtTokens(row.input) + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached),
+          ]))
           mItems.push(
-            h('div', {
-              key: 'm' + mi2,
-              className: 'uh-modelCol',
-              title: row.name + '：共 ' + fmtExact(row.total) + ' tokens · ' + mPct(row.total)
-                + '（未缓存入 ' + fmtTokens(row.input) + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
-            },
+            h('div', colProps,
               h('div', { className: 'uh-modelColVal' }, fmtTokens(row.total)),
               h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mColor(row.name) } })),
-              h('div', { className: 'uh-modelColName' }, mShort(row.name)),
+              h('div', { className: 'uh-modelColName' }, mLabel(row.name)),
             ),
           )
         }
         if (mRestN > 0) {
+          var restProps: any = { key: 'mRest', className: 'uh-modelCol' }
+          Object.assign(restProps, mkTipHandlers([
+            '其他 ' + mRestN + ' 个模型',
+            fmtTokens(mRestT) + ' tokens · ' + mPct(mRestT) + '（占已归属合计）',
+          ]))
           mItems.push(
-            h('div', {
-              key: 'mRest',
-              className: 'uh-modelCol',
-              title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens · ' + mPct(mRestT),
-            },
+            h('div', restProps,
               h('div', { className: 'uh-modelColVal' }, fmtTokens(mRestT)),
               h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } })),
               h('div', { className: 'uh-modelColName' }, '其他 ' + mRestN + ' 个'),
@@ -1229,37 +1263,58 @@ function UsageHeatmapPanel(): any {
           var dd = dayData[dc]
           var segEls = []
           for (var si = 0; si < dd.segs.length; si++) {
-            segEls.push(h('div', {
-              key: dd.segs[si].name,
+            var segName = dd.segs[si].name
+            var segTotal = dd.segs[si].total
+            var segProps: any = {
+              key: segName,
               className: 'uh-modelDaySeg',
-              style: { flexGrow: dd.segs[si].total, background: mColor(dd.segs[si].name) },
-              title: dd.segs[si].name + '：' + fmtTokens(dd.segs[si].total) + ' · ' + Math.round((dd.segs[si].total / dd.dayTotal) * 100) + '%',
-            }))
+              style: { flexGrow: segTotal, background: mColor(segName) },
+              'data-on': String(mRank(segName) === hl ? '1' : '0'),
+            }
+            Object.assign(segProps, mkTipHandlers([
+              segName,
+              fmtMD(dd.key) + ' · ' + fmtTokens(segTotal) + ' tokens · 占当日 ' + Math.round((segTotal / dd.dayTotal) * 100) + '%',
+              '全期 ' + fmtTokens(mTotOf(segName)) + ' · ' + mPct(mTotOf(segName)),
+            ]))
+            segEls.push(h('div', segProps))
           }
+          var dayColProps: any = { key: dd.key, className: 'uh-modelDayCol' }
+          Object.assign(dayColProps, mkTipHandlers([
+            fmtMDWd(dd.key),
+            '共 ' + fmtTokens(dd.dayTotal) + ' tokens · ' + dd.segs.length + ' 个模型',
+            '占累计 ' + pct(dd.dayTotal, m.totalTokens),
+          ]))
           dayCols.push(
-            h('div', {
-              key: dd.key,
-              className: 'uh-modelDayCol',
-              title: fmtMD(dd.key) + '：共 ' + fmtTokens(dd.dayTotal) + ' tokens',
-            },
+            h('div', dayColProps,
               h('div', { className: 'uh-modelDayTrack' }, h('div', {
                 className: 'uh-modelDayBar',
                 style: { height: Math.max(1.5, (dd.dayTotal / (dayMax || 1)) * 100).toFixed(2) + '%' },
               }, segEls)),
-              /* 32 根柱太密，日期标签抽稀（每 4 根 + 末根），空串占位保持行高对齐；全量数值在 title 悬浮里 */
+              /* 32 根柱太密，日期标签抽稀（每 4 根 + 末根），空串占位保持行高对齐；全量数值在悬停 tooltip 里 */
               h('div', { className: 'uh-modelDayName' }, (dc % 4 === 0 || dc === dayData.length - 1) ? fmtMD(dd.key) : ''),
             ),
           )
         }
         var legendItems = []
         for (var li = 0; li < mTop.length; li++) {
-          legendItems.push(h('span', { key: 'lg' + li, className: 'uh-modelLegendItem' },
-            h('i', { className: 'uh-modelLegendDot', style: { background: mColor(mTop[li].name) } }), mShort(mTop[li].name)))
+          var lgName = mTop[li].name
+          var lgProps: any = { key: 'lg' + li, className: 'uh-modelLegendItem' }
+          lgProps.onMouseEnter = function (ev: any) { showTip(ev, [lgName, '全期 ' + fmtTokens(mTotOf(lgName)) + ' tokens · ' + mPct(mTotOf(lgName)) + '（占已归属合计）']); setHl(li) }
+          lgProps.onMouseMove = moveTip
+          lgProps.onMouseLeave = function () { hideTip(); setHl(-1) }
+          legendItems.push(h('span', lgProps,
+            h('i', { className: 'uh-modelLegendDot', style: { background: mColor(lgName) } }), mLabel(lgName)))
         }
-        if (mRestN > 0) legendItems.push(h('span', { key: 'lgRest', className: 'uh-modelLegendItem' },
-          h('i', { className: 'uh-modelLegendDot', style: { background: 'rgb(31 35 41 / 14%)' } }), '其他 ' + mRestN + ' 个'))
+        if (mRestN > 0) {
+          var lgRestProps: any = { key: 'lgRest', className: 'uh-modelLegendItem' }
+          lgRestProps.onMouseEnter = function (ev: any) { showTip(ev, ['其他 ' + mRestN + ' 个模型', '全期 ' + fmtTokens(mRestT) + ' tokens · ' + mPct(mRestT)]); setHl(8) }
+          lgRestProps.onMouseMove = moveTip
+          lgRestProps.onMouseLeave = function () { hideTip(); setHl(-1) }
+          legendItems.push(h('span', lgRestProps,
+            h('i', { className: 'uh-modelLegendDot', style: { background: 'rgb(31 35 41 / 14%)' } }), '其他 ' + mRestN + ' 个'))
+        }
         mChartBody = h('div', null,
-          h('div', { className: 'uh-modelStack' }, dayCols),
+          h('div', { className: 'uh-modelStack', 'data-hl': String(hl) }, dayCols),
           h('div', { className: 'uh-modelLegend' }, legendItems),
         )
       }
@@ -1281,13 +1336,13 @@ function UsageHeatmapPanel(): any {
               'div',
               { className: 'uh-seg', role: 'group', 'aria-label': '模型卡版式' },
               h('button', {
-                className: 'uh-segBtn', 'aria-pressed': String(modelMode === 'model'), type: 'button',
-                onClick: function () { setModelMode('model') },
-              }, '按模型'),
-              h('button', {
                 className: 'uh-segBtn', 'aria-pressed': String(modelMode === 'day'), type: 'button',
                 onClick: function () { setModelMode('day') },
               }, '按日期'),
+              h('button', {
+                className: 'uh-segBtn', 'aria-pressed': String(modelMode === 'model'), type: 'button',
+                onClick: function () { setModelMode('model') },
+              }, '按模型'),
             ),
           ),
           mChartBody,
