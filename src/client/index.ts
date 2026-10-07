@@ -190,6 +190,16 @@ var CSS = [
   '.uh-modelColBar{width:34px;border-radius:4px 4px 0 0;min-height:2px}',
   '.uh-modelColName{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#646a73);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
+  /* 按日期堆叠多色柱（横坐标=日，柱内段=模型；段高按占比 flex-grow 分配） */
+  '.uh-modelStack{margin-top:2px;display:flex;align-items:stretch;gap:3px}',
+  '.uh-modelDayCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px}',
+  '.uh-modelDayTrack{height:120px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
+  '.uh-modelDayBar{width:70%;max-width:26px;display:flex;flex-direction:column-reverse;border-radius:3px 3px 0 0;overflow:hidden}',
+  '.uh-modelDaySeg{width:100%;flex-basis:0;min-height:0}',
+  '.uh-modelDayName{font-size:10px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;white-space:nowrap}',
+  '.uh-modelLegend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px}',
+  '.uh-modelLegendItem{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,#646a73)}',
+  '.uh-modelLegendDot{width:8px;height:8px;border-radius:2px;flex:none}',
 
   /* 洞察列表：单列（10-05 用户选定，双列密度方案被否——观感优先，内容超高时 .uh-page 内部滚动） */
   '.uh-insights{display:grid;gap:9px}',
@@ -990,6 +1000,8 @@ function UsageHeatmapPanel(): any {
   var m = data ? data.metrics : null
   var days = (data && data.days) || {}
   var src = (data && data.source) || null
+  /* 模型卡版式（按模型 / 按日期堆叠）。useState 必须在组件顶层无条件调用 */
+  var modelModeS = React.useState('model')
 
   // 滚动条按需显隐（hy-proxy 同款）：滚动中才给 thumb 上色；rAF 节流 + 捕获阶段
   var pageRef = React.useRef(null)
@@ -1131,8 +1143,9 @@ function UsageHeatmapPanel(): any {
 
     kids.push(h(HeatmapCard, { key: 'heat', days: days, metrics: m }))
 
-    /* 模型消耗：total 降序 top 8 + 其他 + 差额行（已删归档/孤儿投影无逐模型明细，不计入） */
+    /* 模型消耗：版式可切换（按模型柱状 / 按日期堆叠多色柱）。已删归档/孤儿投影无逐模型明细，不计入 */
     var modelMap = (data && data.models) || {}
+    var dayModelMap = (data && data.dayModels) || {}
     var modelRows: Array<{ name: string; total: number; input: number; output: number; cached: number }> = []
     for (var mk in modelMap) {
       var mb = modelMap[mk]
@@ -1148,42 +1161,106 @@ function UsageHeatmapPanel(): any {
       for (var mr = 8; mr < modelRows.length; mr++) mRestT += modelRows[mr].total
       var mMiss = Math.max(0, m.totalTokens - modelSum)
       var mMax = mTop[0].total || 1
-      /* 排名色阶：榜首最深、依次变浅（同一蓝系，纯度随排名衰减） */
-      var mAlpha = [0.26, 0.2, 0.155, 0.12, 0.095, 0.08, 0.068, 0.058]
-      var mBarColor = function (rank: number): string {
-        var a = mAlpha[Math.min(rank, mAlpha.length - 1)]
-        return 'rgb(22 119 255 / ' + a + ')'
-      }
+      /* 多色调色板：top8 各一色（区分度优先），其余归「其他」灰 */
+      var mPalette = ['#1677ff', '#36cfc9', '#9254de', '#f759ab', '#faad14', '#73d13d', '#ff7a45', '#597ef7']
+      var mColorOf: Record<string, string> = {}
+      for (var pc = 0; pc < mTop.length; pc++) mColorOf[mTop[pc].name] = mPalette[pc % mPalette.length]
+      var mColor = function (name: string): string { return mColorOf[name] || 'rgb(31 35 41 / 14%)' }
       var mPct = function (t: number): string { return Math.round((t / (modelSum || 1)) * 100) + '%' }
       var mShort = function (full: string): string { var i = full.indexOf('/'); return i >= 0 ? full.slice(i + 1) : full }
-      var mItems = []
-      for (var mi2 = 0; mi2 < mTop.length; mi2++) {
-        var row = mTop[mi2]
-        var hPct = Math.max(1.5, (row.total / mMax) * 100).toFixed(2) + '%'
-        mItems.push(
-          h('div', {
-            key: 'm' + mi2,
-            className: 'uh-modelCol',
-            title: row.name + '：共 ' + fmtExact(row.total) + ' tokens · ' + mPct(row.total)
-              + '（未缓存入 ' + fmtTokens(row.input) + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
-          },
-            h('div', { className: 'uh-modelColVal' }, fmtTokens(row.total)),
-            h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mBarColor(mi2) } })),
-            h('div', { className: 'uh-modelColName' }, mShort(row.name)),
-          ),
-        )
-      }
-      if (mRestN > 0) {
-        mItems.push(
-          h('div', {
-            key: 'mRest',
-            className: 'uh-modelCol',
-            title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens · ' + mPct(mRestT),
-          },
-            h('div', { className: 'uh-modelColVal' }, fmtTokens(mRestT)),
-            h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } })),
-            h('div', { className: 'uh-modelColName' }, '其他 ' + mRestN + ' 个'),
-          ),
+      var modelMode = modelModeS[0]
+      var setModelMode = modelModeS[1]
+
+      var mChartBody: any = null
+      if (modelMode === 'model') {
+        var mItems = []
+        for (var mi2 = 0; mi2 < mTop.length; mi2++) {
+          var row = mTop[mi2]
+          var hPct = Math.max(1.5, (row.total / mMax) * 100).toFixed(2) + '%'
+          mItems.push(
+            h('div', {
+              key: 'm' + mi2,
+              className: 'uh-modelCol',
+              title: row.name + '：共 ' + fmtExact(row.total) + ' tokens · ' + mPct(row.total)
+                + '（未缓存入 ' + fmtTokens(row.input) + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
+            },
+              h('div', { className: 'uh-modelColVal' }, fmtTokens(row.total)),
+              h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mColor(row.name) } })),
+              h('div', { className: 'uh-modelColName' }, mShort(row.name)),
+            ),
+          )
+        }
+        if (mRestN > 0) {
+          mItems.push(
+            h('div', {
+              key: 'mRest',
+              className: 'uh-modelCol',
+              title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens · ' + mPct(mRestT),
+            },
+              h('div', { className: 'uh-modelColVal' }, fmtTokens(mRestT)),
+              h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } })),
+              h('div', { className: 'uh-modelColName' }, '其他 ' + mRestN + ' 个'),
+            ),
+          )
+        }
+        mChartBody = h('div', { className: 'uh-modelChart' }, mItems)
+      } else {
+        /* 按日期堆叠：横坐标=本地日（升序），柱高按当日总量/最大日归一，柱内段=模型（段高按当日占比分配） */
+        var dayKeys2 = Object.keys(dayModelMap).sort()
+        var dayData: Array<{ key: string; segs: Array<{ name: string; total: number }>; dayTotal: number }> = []
+        var dayMax = 0
+        for (var dk2 = 0; dk2 < dayKeys2.length; dk2++) {
+          var dkey0 = dayKeys2[dk2]
+          var per0 = dayModelMap[dkey0]
+          var segs0: Array<{ name: string; total: number }> = []
+          var dayTotal0 = 0
+          for (var sk0 in per0) {
+            var sb0 = per0[sk0]
+            var st0 = sb0[0] + sb0[1] + sb0[2] + sb0[3]
+            if (st0 > 0) { segs0.push({ name: sk0, total: st0 }); dayTotal0 += st0 }
+          }
+          if (!segs0.length) continue
+          segs0.sort(function (a, b) { return b.total - a.total })
+          if (dayTotal0 > dayMax) dayMax = dayTotal0
+          dayData.push({ key: dkey0, segs: segs0, dayTotal: dayTotal0 })
+        }
+        var dayCols = []
+        for (var dc = 0; dc < dayData.length; dc++) {
+          var dd = dayData[dc]
+          var segEls = []
+          for (var si = 0; si < dd.segs.length; si++) {
+            segEls.push(h('div', {
+              key: dd.segs[si].name,
+              className: 'uh-modelDaySeg',
+              style: { flexGrow: dd.segs[si].total, background: mColor(dd.segs[si].name) },
+              title: dd.segs[si].name + '：' + fmtTokens(dd.segs[si].total) + ' · ' + Math.round((dd.segs[si].total / dd.dayTotal) * 100) + '%',
+            }))
+          }
+          dayCols.push(
+            h('div', {
+              key: dd.key,
+              className: 'uh-modelDayCol',
+              title: fmtMD(dd.key) + '：共 ' + fmtTokens(dd.dayTotal) + ' tokens',
+            },
+              h('div', { className: 'uh-modelDayTrack' }, h('div', {
+                className: 'uh-modelDayBar',
+                style: { height: Math.max(1.5, (dd.dayTotal / (dayMax || 1)) * 100).toFixed(2) + '%' },
+              }, segEls)),
+              /* 32 根柱太密，日期标签抽稀（每 4 根 + 末根），空串占位保持行高对齐；全量数值在 title 悬浮里 */
+              h('div', { className: 'uh-modelDayName' }, (dc % 4 === 0 || dc === dayData.length - 1) ? fmtMD(dd.key) : ''),
+            ),
+          )
+        }
+        var legendItems = []
+        for (var li = 0; li < mTop.length; li++) {
+          legendItems.push(h('span', { key: 'lg' + li, className: 'uh-modelLegendItem' },
+            h('i', { className: 'uh-modelLegendDot', style: { background: mColor(mTop[li].name) } }), mShort(mTop[li].name)))
+        }
+        if (mRestN > 0) legendItems.push(h('span', { key: 'lgRest', className: 'uh-modelLegendItem' },
+          h('i', { className: 'uh-modelLegendDot', style: { background: 'rgb(31 35 41 / 14%)' } }), '其他 ' + mRestN + ' 个'))
+        mChartBody = h('div', null,
+          h('div', { className: 'uh-modelStack' }, dayCols),
+          h('div', { className: 'uh-modelLegend' }, legendItems),
         )
       }
       var mMissEl = mMiss > 0 ? h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）') : null
@@ -1200,8 +1277,20 @@ function UsageHeatmapPanel(): any {
               h('h4', { className: 'uh-sectionTitle' }, '模型消耗'),
               h('p', { className: 'uh-sectionDesc' }, '按模型汇总 token 消耗 · 共 ' + modelRows.length + ' 个'),
             ),
+            h(
+              'div',
+              { className: 'uh-seg', role: 'group', 'aria-label': '模型卡版式' },
+              h('button', {
+                className: 'uh-segBtn', 'aria-pressed': String(modelMode === 'model'), type: 'button',
+                onClick: function () { setModelMode('model') },
+              }, '按模型'),
+              h('button', {
+                className: 'uh-segBtn', 'aria-pressed': String(modelMode === 'day'), type: 'button',
+                onClick: function () { setModelMode('day') },
+              }, '按日期'),
+            ),
           ),
-          h('div', { className: 'uh-modelChart' }, mItems),
+          mChartBody,
           mMissEl,
         ),
       )

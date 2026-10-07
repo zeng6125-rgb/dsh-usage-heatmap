@@ -31,6 +31,9 @@ export type DayBuckets = Record<string, [number, number, number, number]>
 /** 模型分桶："provider/model" → [uncachedInput, output, cacheRead, cacheWrite] */
 export type ModelBuckets = Record<string, [number, number, number, number]>
 
+/** 日×模型分桶：本地日 → 模型 → [uncachedInput, output, cacheRead, cacheWrite]（日期堆叠柱状图数据源） */
+export type DayModelBuckets = Record<string, ModelBuckets>
+
 export interface LogSessionEntry {
   /** sessions 根目录下的相对路径（稳定键） */
   path: string
@@ -46,6 +49,8 @@ export interface LogSessionEntry {
   days: DayBuckets
   /** 模型分桶（同 ModelBuckets）。缺 / mv 不符 = 不可信，下次扫描对该文件全量重折补齐 */
   models?: ModelBuckets
+  /** 日×模型分桶（同 DayModelBuckets）。缺 = 旧条目，随 mv 门一起全量重折补齐 */
+  dayModels?: DayModelBuckets
   /** 模型口径版本（MODELS_V） */
   mv?: number
   turns: number
@@ -126,6 +131,8 @@ export interface ScanResult {
   metrics: UsageMetrics
   /** 模型 → [uncachedInput, output, cacheRead, cacheWrite]。仅含带模型字段的用量；已删会话/孤儿投影无模型明细，不计入 */
   models: ModelBuckets
+  /** 日 → 模型 → 四元桶（日期堆叠柱状图数据源；口径同 models） */
+  dayModels: DayModelBuckets
   source: {
     logs: number
     orphans: number
@@ -140,7 +147,7 @@ export interface ScanResult {
 
 const CACHE_VERSION = 1
 /** 模型分桶口径版本：条目须带 mv === MODELS_V 才信任其 models / 允许增量续扫（自愈中间版本写入的不完整 models）。 */
-const MODELS_V = 2
+const MODELS_V = 3
 const HOME = os.homedir()
 export const SESSIONS_ROOT = path.join(HOME, '.dsh', 'sessions')
 export const PROJ_DIR = path.join(HOME, '.dsh', 'storages', 'session_projcache', 'sessions')
@@ -404,6 +411,11 @@ function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | und
       if (mb) {
         mb[0] -= prev.b[0]; mb[1] -= prev.b[1]; mb[2] -= prev.b[2]; mb[3] -= prev.b[3]
       }
+      const pdm = out.dayModels[prev.day]
+      const pmb = pdm && pdm[prev.m]
+      if (pmb) {
+        pmb[0] -= prev.b[0]; pmb[1] -= prev.b[1]; pmb[2] -= prev.b[2]; pmb[3] -= prev.b[3]
+      }
     }
   }
   const d = (out.days[day] ??= [0, 0, 0, 0])
@@ -411,6 +423,8 @@ function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | und
   if (model) {
     const mb = (out.models[model] ??= [0, 0, 0, 0])
     mb[0] += b[0]; mb[1] += b[1]; mb[2] += b[2]; mb[3] += b[3]
+    const dmb = ((out.dayModels[day] ??= {})[model] ??= [0, 0, 0, 0])
+    dmb[0] += b[0]; dmb[1] += b[1]; dmb[2] += b[2]; dmb[3] += b[3]
   }
   st.last = { turn, step, day, b, m: model }
 }
@@ -424,6 +438,8 @@ interface FoldedSession {
   days: DayBuckets
   /** 模型分桶（同 LogSessionEntry.models） */
   models: ModelBuckets
+  /** 日×模型分桶（同 LogSessionEntry.dayModels） */
+  dayModels: DayModelBuckets
   turns: number
   steps: number
 }
@@ -492,9 +508,17 @@ function cloneModels(m?: ModelBuckets): ModelBuckets {
   return o
 }
 
+/** 深拷贝日×模型分桶。 */
+function cloneDayModels(d?: DayModelBuckets): DayModelBuckets {
+  const o: DayModelBuckets = {}
+  if (!d) return o
+  for (const k of Object.keys(d)) o[k] = cloneModels(d[k])
+  return o
+}
+
 function newFoldState(): FoldState {
   return {
-    out: { id: '', cwd: '', title: '', first: 0, last: 0, days: {}, models: {}, turns: 0, steps: 0 },
+    out: { id: '', cwd: '', title: '', first: 0, last: 0, days: {}, models: {}, dayModels: {}, turns: 0, steps: 0 },
     turnSet: new Set<number>(),
     last: null,
   }
@@ -1309,6 +1333,26 @@ function mergeModels(sessions: Record<string, LogSessionEntry>, archived: Record
   return out
 }
 
+/** 日×模型分桶合计（同 mergeModels 的口径）。 */
+function mergeDayModels(sessions: Record<string, LogSessionEntry>, archived: Record<string, LogSessionEntry>): DayModelBuckets {
+  const out: DayModelBuckets = {}
+  const add = (dm?: DayModelBuckets): void => {
+    if (!dm) return
+    for (const day of Object.keys(dm)) {
+      const per = dm[day]
+      const od = (out[day] ??= {})
+      for (const k of Object.keys(per)) {
+        const v = per[k]
+        const o = (od[k] ??= [0, 0, 0, 0])
+        o[0] += v[0]; o[1] += v[1]; o[2] += v[2]; o[3] += v[3]
+      }
+    }
+  }
+  for (const s of Object.values(sessions)) add(s.dayModels)
+  for (const a of Object.values(archived)) add(a.dayModels)
+  return out
+}
+
 async function runScan(): Promise<ScanResult> {
   if (typeof zstdDecompressSync !== 'function') {
     // 早失败：否则缺 zstd 支持的运行时会把每帧解码吞成 dropped，静默产出 0 数据
@@ -1370,6 +1414,7 @@ async function runScan(): Promise<ScanResult> {
               first: prev.first, last: prev.last,
               days: cloneDays(prev.days),
               models: cloneModels(prev.models),
+              dayModels: cloneDayModels(prev.dayModels),
               turns: 0, steps: prev.steps,
             },
             turnSet: new Set<number>(prev.t as number[]),
@@ -1396,6 +1441,7 @@ async function runScan(): Promise<ScanResult> {
         last: folded.last,
         days: folded.days,
         models: folded.models,
+        dayModels: folded.dayModels,
         mv: MODELS_V,
         turns: folded.turns,
         steps: folded.steps,
@@ -1435,6 +1481,7 @@ async function runScan(): Promise<ScanResult> {
     dayTotals,
     metrics,
     models: mergeModels(cache.sessions, archived),
+    dayModels: mergeDayModels(cache.sessions, archived),
     source: {
       logs: rels.length,
       orphans: Object.keys(cache.orphans).length,

@@ -2,6 +2,8 @@
 export type DayBuckets = Record<string, [number, number, number, number]>;
 /** 模型分桶："provider/model" → [uncachedInput, output, cacheRead, cacheWrite] */
 export type ModelBuckets = Record<string, [number, number, number, number]>;
+/** 日×模型分桶：本地日 → 模型 → [uncachedInput, output, cacheRead, cacheWrite]（日期堆叠柱状图数据源） */
+export type DayModelBuckets = Record<string, ModelBuckets>;
 export interface LogSessionEntry {
     /** sessions 根目录下的相对路径（稳定键） */
     path: string;
@@ -17,6 +19,8 @@ export interface LogSessionEntry {
     days: DayBuckets;
     /** 模型分桶（同 ModelBuckets）。缺 / mv 不符 = 不可信，下次扫描对该文件全量重折补齐 */
     models?: ModelBuckets;
+    /** 日×模型分桶（同 DayModelBuckets）。缺 = 旧条目，随 mv 门一起全量重折补齐 */
+    dayModels?: DayModelBuckets;
     /** 模型口径版本（MODELS_V） */
     mv?: number;
     turns: number;
@@ -98,6 +102,8 @@ export interface ScanResult {
     metrics: UsageMetrics;
     /** 模型 → [uncachedInput, output, cacheRead, cacheWrite]。仅含带模型字段的用量；已删会话/孤儿投影无模型明细，不计入 */
     models: ModelBuckets;
+    /** 日 → 模型 → 四元桶（日期堆叠柱状图数据源；口径同 models） */
+    dayModels: DayModelBuckets;
     source: {
         logs: number;
         orphans: number;
@@ -140,6 +146,8 @@ interface FoldedSession {
     days: DayBuckets;
     /** 模型分桶（同 LogSessionEntry.models） */
     models: ModelBuckets;
+    /** 日×模型分桶（同 LogSessionEntry.dayModels） */
+    dayModels: DayModelBuckets;
     turns: number;
     steps: number;
 }
