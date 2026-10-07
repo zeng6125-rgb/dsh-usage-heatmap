@@ -1205,6 +1205,8 @@ function UsageHeatmapPanel(): any {
       var setHl = hlS[1]
 
       var mChartBody: any = null
+      /* 「按日期」版式逐日合计与热力图日总量之差（旧版归档缺日×模型明细的部分） */
+      var dayMiss = 0
       if (modelMode === 'model') {
         var mItems = []
         for (var mi2 = 0; mi2 < mTop.length; mi2++) {
@@ -1262,6 +1264,14 @@ function UsageHeatmapPanel(): any {
           segs0.sort(function (a, b) { return b.total - a.total })
           if (dayTotal0 > dayMax) dayMax = dayTotal0
           dayData.push({ key: dkey0, segs: segs0, dayTotal: dayTotal0 })
+        }
+        /* 逐日缺口 = Σ(热力图日总量 − dayModels 该日合计)：旧版归档无日×模型明细的部分 */
+        for (var dmk in days) {
+          var dtv = days[dmk] || 0
+          var dmt = 0
+          var perM = dayModelMap[dmk]
+          if (perM) for (var pmk in perM) { var pb = perM[pmk]; dmt += pb[0] + pb[1] + pb[2] + pb[3] }
+          if (dtv > dmt) dayMiss += dtv - dmt
         }
         var dayCols = []
         for (var dc = 0; dc < dayData.length; dc++) {
@@ -1323,7 +1333,9 @@ function UsageHeatmapPanel(): any {
           h('div', { className: 'uh-modelLegend' }, legendItems),
         )
       }
-      var mMissEl = mMiss > 0 ? h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）') : null
+      /* 差额行按版式取对应口径：按模型=累计−模型合计；按日期=逐日缺口（旧版归档无日×模型明细） */
+      var mMissShown = modelMode === 'day' ? dayMiss : mMiss
+      var mMissEl = mMissShown > 0 ? h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMissShown) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）') : null
       kids.push(
         h(
           'div',
