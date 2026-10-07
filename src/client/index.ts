@@ -183,13 +183,13 @@ var CSS = [
 
   /* 洞察列表 */
   /* 模型消耗卡：行式列表（名称 + 值 + 底部占比条） */
-  '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:5px}',
-  '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;background:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%))}',
+  '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:4px}',
+  '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;background-color:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%));overflow:hidden}',
   '.uh-modelName{font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
+  '.uh-modelPct{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;flex:none;min-width:34px;text-align:right}',
   '.uh-modelVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;flex:none}',
-  '.uh-modelBar{position:absolute;left:0;bottom:0;height:2px;border-radius:0 2px 2px 0;background:var(--uh-l3,#79bbff);pointer-events:none}',
-  '.uh-modelMore{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);background:none;padding:1px 10px 0}',
-  '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:2px 2px 0}',
+  '.uh-modelRest .uh-modelName{color:var(--dsw-alias-label-secondary,#646a73);font-weight:500}',
+  '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
 
   /* 洞察列表：单列（10-05 用户选定，双列密度方案被否——观感优先，内容超高时 .uh-page 内部滚动） */
   '.uh-insights{display:grid;gap:9px}',
@@ -1148,6 +1148,11 @@ function UsageHeatmapPanel(): any {
       for (var mr = 8; mr < modelRows.length; mr++) mRestT += modelRows[mr].total
       var mMiss = Math.max(0, m.totalTokens - modelSum)
       var mMax = mTop[0].total || 1
+      var mFill = function (t: number): string {
+        var w = Math.max(1.5, (t / mMax) * 100)
+        return 'linear-gradient(90deg,rgb(22 119 255 / 15%) ' + w.toFixed(2) + '%,rgb(22 119 255 / 0%) ' + w.toFixed(2) + '%)'
+      }
+      var mPct = function (t: number): string { return Math.round((t / (modelSum || 1)) * 100) + '%' }
       var mItems = []
       for (var mi2 = 0; mi2 < mTop.length; mi2++) {
         var row = mTop[mi2]
@@ -1155,16 +1160,30 @@ function UsageHeatmapPanel(): any {
           h('div', {
             key: 'm' + mi2,
             className: 'uh-modelRow',
+            style: { backgroundImage: mFill(row.total) },
             title: row.name + '：共 ' + fmtExact(row.total) + ' tokens（未缓存入 ' + fmtTokens(row.input)
               + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
           },
             h('span', { className: 'uh-modelName' }, row.name),
+            h('span', { className: 'uh-modelPct' }, mPct(row.total)),
             h('span', { className: 'uh-modelVal' }, fmtTokens(row.total)),
-            h('i', { className: 'uh-modelBar', style: { width: Math.max(2, Math.round((row.total / mMax) * 100)) + '%' } }),
           ),
         )
       }
-      if (mRestN > 0) mItems.push(h('div', { key: 'mRest', className: 'uh-modelRow uh-modelMore' }, '其他 ' + mRestN + ' 个模型 · ' + fmtTokens(mRestT)))
+      if (mRestN > 0) {
+        mItems.push(
+          h('div', {
+            key: 'mRest',
+            className: 'uh-modelRow uh-modelRest',
+            style: { backgroundImage: 'linear-gradient(90deg,rgb(31 35 41 / 7%) ' + Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%,rgb(31 35 41 / 0%) ' + Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%)' },
+            title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens',
+          },
+            h('span', { className: 'uh-modelName' }, '其他 ' + mRestN + ' 个模型'),
+            h('span', { className: 'uh-modelPct' }, mPct(mRestT)),
+            h('span', { className: 'uh-modelVal' }, fmtTokens(mRestT)),
+          ),
+        )
+      }
       if (mMiss > 0) mItems.push(h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）'))
       kids.push(
         h(
