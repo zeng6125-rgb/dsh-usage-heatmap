@@ -185,7 +185,7 @@ var CSS = [
   /* 模型消耗卡：柱状图（10-08 用户指定；每列=值标签+柱+短名，悬浮 title 带全名/分桶/占比） */
   '.uh-modelChart{margin-top:2px;display:flex;align-items:stretch;gap:6px;padding-top:20px}',
   '.uh-modelCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px}',
-  '.uh-modelColVal{position:absolute;left:0;right:0;text-align:center;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}',
+  '.uh-modelColVal{position:absolute;left:0;right:0;text-align:center;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}',
   '.uh-modelColTrack{position:relative;height:150px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
   '.uh-modelColBar{width:44px;border-radius:4px 4px 0 0;min-height:2px}',
   '.uh-modelColName{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#646a73);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
