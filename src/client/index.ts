@@ -182,15 +182,13 @@ var CSS = [
   '.uh-tip em{font-style:normal;color:rgb(255 255 255 / 65%);font-size:11px}',
 
   /* 洞察列表 */
-  /* 模型消耗卡：行式列表（名称 + 值 + 底部占比条） */
-  '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:4px}',
-  '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;background-color:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%));overflow:hidden}',
-  '.uh-modelName{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
-  /* 右侧两列：固定盒宽 + 同字体同色（tnum 双保险），保证逐行成列 */
-  '.uh-modelNum{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;flex:none;text-align:right}',
-  '.uh-modelNumPct{width:34px}',
-  '.uh-modelNumVal{width:49px}',
-  '.uh-modelRest .uh-modelName{color:var(--dsw-alias-label-secondary,#646a73);font-weight:600}',
+  /* 模型消耗卡：柱状图（10-08 用户指定；每列=值标签+柱+短名，悬浮 title 带全名/分桶/占比） */
+  '.uh-modelChart{margin-top:2px;display:flex;align-items:stretch;gap:6px}',
+  '.uh-modelCol{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px}',
+  '.uh-modelColVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}',
+  '.uh-modelColTrack{height:120px;width:100%;display:flex;align-items:flex-end;justify-content:center}',
+  '.uh-modelColBar{width:34px;border-radius:4px 4px 0 0;min-height:2px}',
+  '.uh-modelColName{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#646a73);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
 
   /* 洞察列表：单列（10-05 用户选定，双列密度方案被否——观感优先，内容超高时 .uh-page 内部滚动） */
@@ -1152,26 +1150,26 @@ function UsageHeatmapPanel(): any {
       var mMax = mTop[0].total || 1
       /* 排名色阶：榜首最深、依次变浅（同一蓝系，纯度随排名衰减） */
       var mAlpha = [0.26, 0.2, 0.155, 0.12, 0.095, 0.08, 0.068, 0.058]
-      var mFill = function (t: number, rank: number): string {
-        var w = Math.max(1.5, (t / mMax) * 100).toFixed(2)
+      var mBarColor = function (rank: number): string {
         var a = mAlpha[Math.min(rank, mAlpha.length - 1)]
-        return 'linear-gradient(90deg,rgb(22 119 255 / ' + a + ') ' + w + '%,rgb(22 119 255 / 0%) ' + w + '%)'
+        return 'rgb(22 119 255 / ' + a + ')'
       }
       var mPct = function (t: number): string { return Math.round((t / (modelSum || 1)) * 100) + '%' }
+      var mShort = function (full: string): string { var i = full.indexOf('/'); return i >= 0 ? full.slice(i + 1) : full }
       var mItems = []
       for (var mi2 = 0; mi2 < mTop.length; mi2++) {
         var row = mTop[mi2]
+        var hPct = Math.max(1.5, (row.total / mMax) * 100).toFixed(2) + '%'
         mItems.push(
           h('div', {
             key: 'm' + mi2,
-            className: 'uh-modelRow',
-            style: { backgroundImage: mFill(row.total, mi2) },
-            title: row.name + '：共 ' + fmtExact(row.total) + ' tokens（未缓存入 ' + fmtTokens(row.input)
-              + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
+            className: 'uh-modelCol',
+            title: row.name + '：共 ' + fmtExact(row.total) + ' tokens · ' + mPct(row.total)
+              + '（未缓存入 ' + fmtTokens(row.input) + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
           },
-            h('span', { className: 'uh-modelName' }, row.name),
-            h('span', { className: 'uh-modelNum uh-modelNumPct' }, mPct(row.total)),
-            h('span', { className: 'uh-modelNum uh-modelNumVal' }, fmtTokens(row.total)),
+            h('div', { className: 'uh-modelColVal' }, fmtTokens(row.total)),
+            h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: hPct, background: mBarColor(mi2) } })),
+            h('div', { className: 'uh-modelColName' }, mShort(row.name)),
           ),
         )
       }
@@ -1179,17 +1177,16 @@ function UsageHeatmapPanel(): any {
         mItems.push(
           h('div', {
             key: 'mRest',
-            className: 'uh-modelRow uh-modelRest',
-            style: { backgroundImage: 'linear-gradient(90deg,rgb(31 35 41 / 7%) ' + Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%,rgb(31 35 41 / 0%) ' + Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%)' },
-            title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens',
+            className: 'uh-modelCol',
+            title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens · ' + mPct(mRestT),
           },
-            h('span', { className: 'uh-modelName' }, '其他 ' + mRestN + ' 个模型'),
-            h('span', { className: 'uh-modelNum uh-modelNumPct' }, mPct(mRestT)),
-            h('span', { className: 'uh-modelNum uh-modelNumVal' }, fmtTokens(mRestT)),
+            h('div', { className: 'uh-modelColVal' }, fmtTokens(mRestT)),
+            h('div', { className: 'uh-modelColTrack' }, h('div', { className: 'uh-modelColBar', style: { height: Math.max(1.5, (mRestT / mMax) * 100).toFixed(2) + '%', background: 'rgb(31 35 41 / 10%)' } })),
+            h('div', { className: 'uh-modelColName' }, '其他 ' + mRestN + ' 个'),
           ),
         )
       }
-      if (mMiss > 0) mItems.push(h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）'))
+      var mMissEl = mMiss > 0 ? h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）') : null
       kids.push(
         h(
           'div',
@@ -1204,7 +1201,8 @@ function UsageHeatmapPanel(): any {
               h('p', { className: 'uh-sectionDesc' }, '按模型汇总 token 消耗 · 共 ' + modelRows.length + ' 个'),
             ),
           ),
-          h('div', { className: 'uh-modelList' }, mItems),
+          h('div', { className: 'uh-modelChart' }, mItems),
+          mMissEl,
         ),
       )
     }
