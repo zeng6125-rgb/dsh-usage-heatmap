@@ -186,8 +186,10 @@ var CSS = [
   '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:4px}',
   '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;background-color:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%));overflow:hidden}',
   '.uh-modelName{font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
-  '.uh-modelPct{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;flex:none;min-width:38px;text-align:right}',
-  '.uh-modelVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;flex:none;min-width:64px;text-align:right}',
+  /* 右侧两列：固定盒宽 + 同字体同色（tnum 双保险），保证逐行成列 */
+  '.uh-modelNum{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;flex:none;text-align:right}',
+  '.uh-modelNumPct{width:42px}',
+  '.uh-modelNumVal{width:78px}',
   '.uh-modelRest .uh-modelName{color:var(--dsw-alias-label-secondary,#646a73);font-weight:500}',
   '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
 
@@ -1168,8 +1170,8 @@ function UsageHeatmapPanel(): any {
               + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
           },
             h('span', { className: 'uh-modelName' }, row.name),
-            h('span', { className: 'uh-modelPct' }, mPct(row.total)),
-            h('span', { className: 'uh-modelVal' }, fmtTokens(row.total)),
+            h('span', { className: 'uh-modelNum uh-modelNumPct' }, mPct(row.total)),
+            h('span', { className: 'uh-modelNum uh-modelNumVal' }, fmtTokens(row.total)),
           ),
         )
       }
@@ -1182,8 +1184,8 @@ function UsageHeatmapPanel(): any {
             title: '其他 ' + mRestN + ' 个模型合计 ' + fmtExact(mRestT) + ' tokens',
           },
             h('span', { className: 'uh-modelName' }, '其他 ' + mRestN + ' 个模型'),
-            h('span', { className: 'uh-modelPct' }, mPct(mRestT)),
-            h('span', { className: 'uh-modelVal' }, fmtTokens(mRestT)),
+            h('span', { className: 'uh-modelNum uh-modelNumPct' }, mPct(mRestT)),
+            h('span', { className: 'uh-modelNum uh-modelNumVal' }, fmtTokens(mRestT)),
           ),
         )
       }
