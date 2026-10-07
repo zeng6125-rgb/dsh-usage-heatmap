@@ -926,10 +926,26 @@ function buildInsights(days: Record<string, number>, m: any): any[] {
     if (wk[j] > wk[best]) best = j
   }
   if (sum > 0 && wk[best] > 0) {
-    out.push({
-      k: 'rhythm',
-      text: '最活跃的是周' + WD[best] + '：贡献 ' + fmtTokens(wk[best]) + ' tokens（' + pct(wk[best], sum) + '）',
-    })
+    // 星期合计常被一两个尖峰日撑起（如 10-01 马拉松），只报「最活跃的是周X」显得反直觉——
+    // 把大头日期点名出来让数字自证：该星期内占比 ≥15% 的日子最多点 2 个，且合计覆盖 ≥60% 才追加。
+    var wdDays: string[] = []
+    for (var i2 = 0; i2 < dayKeys.length; i2++) {
+      var d2 = parseKey(dayKeys[i2])
+      if ((d2.getDay() + 6) % 7 === best && days[dayKeys[i2]] > 0) wdDays.push(dayKeys[i2])
+    }
+    wdDays.sort(function (a: string, b: string) { return days[b] - days[a] })
+    var parts: string[] = []
+    var covered = 0
+    for (var i3 = 0; i3 < wdDays.length && i3 < 2; i3++) {
+      if (days[wdDays[i3]] < wk[best] * 0.15) break
+      covered += days[wdDays[i3]]
+      parts.push(fmtMD(wdDays[i3]) + '（' + fmtTokens(days[wdDays[i3]]) + '）')
+    }
+    var rhythm = '最活跃的是周' + WD[best] + '：贡献 ' + fmtTokens(wk[best]) + ' tokens（' + pct(wk[best], sum) + '）'
+    if (parts.length > 0 && covered >= wk[best] * 0.6) {
+      rhythm += '，主要来自 ' + parts.join('、') + (wdDays.length > parts.length ? ' 等 ' + wdDays.length + ' 天' : '')
+    }
+    out.push({ k: 'rhythm', text: rhythm })
   }
 
   return out
@@ -1236,6 +1252,13 @@ function installSettingsNavIcon(): () => void {
     if (disposed) return
     var wanted = String(SECTION_LABEL || '').trim()
     if (!wanted) return // 文本未就绪：什么都不标记，绝不因空串而认领整列
+    // #perf 2026-10-06：早退。NAV_ROW_SELECTOR 是 `[role="dialog"] nav button` 后代组合，
+    // 设置对话框关闭时（= 聊天/流式的绝大部分时间）必然 0 匹配，却仍要付一次全文档后代遍历
+    // （实测 23845 节点文档 3.27ms/次；CDP profiler 里本 sync 占全部采样 ~17%）。先查单层属性
+    // `[role="dialog"]`：无 dialog ⟹ 后代选择器必为空 ⟹ 下面循环体一次都不进 ⇒ 与原实现逐字节
+    // 等价，只是把「关闭态」的成本从后代遍历降为单属性遍历并直接返回。此判据不依赖 wanted 的值，
+    // 故与 SECTION_LABEL 是否随 locale 变化无关。
+    if (!document.querySelector('[role="dialog"]')) return
     var rows = document.querySelectorAll(NAV_ROW_SELECTOR)
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
@@ -1255,8 +1278,13 @@ function installSettingsNavIcon(): () => void {
   var observer: any = null
   try {
     observer = new MutationObserver(schedule)
-    // subtree+characterData：设置页是挂到 body 的门户，且 locale 切换会改写 label 文本
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+    // #perf 2026-10-06：去掉 characterData。本标记只取决于导航行的【存在性】与【label 文本】，
+    // 二者都只随 childList 变化（React 增删行）；SECTION_LABEL 是模块级固定常量（无 locale 订阅、
+    // 从不重新赋值），nav 行 label 渲染后不会被就地改写 ⇒ 永不需要 characterData。而 characterData:true
+    // 会让【聊天流式期每个 token 追加】都触发一次 sync —— 实测 180 帧流式 → 180 次全文档 qsa（1:1），
+    // 是本轮最大的真实流式开销之一。去掉后这些触发全部消失，对话框开合与导航行增删仍由
+    // childList+subtree 正常驱动，标记终态不变。
+    observer.observe(document.body, { childList: true, subtree: true })
   } catch {
     /* 观察失败：至少已同步过一次 */
   }
