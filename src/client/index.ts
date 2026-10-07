@@ -186,8 +186,8 @@ var CSS = [
   '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:4px}',
   '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;background-color:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%));overflow:hidden}',
   '.uh-modelName{font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
-  '.uh-modelPct{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;flex:none;min-width:34px;text-align:right}',
-  '.uh-modelVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;flex:none}',
+  '.uh-modelPct{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);font-variant-numeric:tabular-nums;flex:none;min-width:38px;text-align:right}',
+  '.uh-modelVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;flex:none;min-width:64px;text-align:right}',
   '.uh-modelRest .uh-modelName{color:var(--dsw-alias-label-secondary,#646a73);font-weight:500}',
   '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:4px 2px 0}',
 
@@ -1148,9 +1148,12 @@ function UsageHeatmapPanel(): any {
       for (var mr = 8; mr < modelRows.length; mr++) mRestT += modelRows[mr].total
       var mMiss = Math.max(0, m.totalTokens - modelSum)
       var mMax = mTop[0].total || 1
-      var mFill = function (t: number): string {
-        var w = Math.max(1.5, (t / mMax) * 100)
-        return 'linear-gradient(90deg,rgb(22 119 255 / 15%) ' + w.toFixed(2) + '%,rgb(22 119 255 / 0%) ' + w.toFixed(2) + '%)'
+      /* 排名色阶：榜首最深、依次变浅（同一蓝系，纯度随排名衰减） */
+      var mAlpha = [0.26, 0.2, 0.155, 0.12, 0.095, 0.08, 0.068, 0.058]
+      var mFill = function (t: number, rank: number): string {
+        var w = Math.max(1.5, (t / mMax) * 100).toFixed(2)
+        var a = mAlpha[Math.min(rank, mAlpha.length - 1)]
+        return 'linear-gradient(90deg,rgb(22 119 255 / ' + a + ') ' + w + '%,rgb(22 119 255 / 0%) ' + w + '%)'
       }
       var mPct = function (t: number): string { return Math.round((t / (modelSum || 1)) * 100) + '%' }
       var mItems = []
@@ -1160,7 +1163,7 @@ function UsageHeatmapPanel(): any {
           h('div', {
             key: 'm' + mi2,
             className: 'uh-modelRow',
-            style: { backgroundImage: mFill(row.total) },
+            style: { backgroundImage: mFill(row.total, mi2) },
             title: row.name + '：共 ' + fmtExact(row.total) + ' tokens（未缓存入 ' + fmtTokens(row.input)
               + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
           },
