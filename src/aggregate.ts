@@ -28,6 +28,9 @@ import crypto from 'node:crypto'
 /** 一个会话某天的分桶：[uncachedInput, output, cacheRead, cacheWrite] */
 export type DayBuckets = Record<string, [number, number, number, number]>
 
+/** 模型分桶："provider/model" → [uncachedInput, output, cacheRead, cacheWrite] */
+export type ModelBuckets = Record<string, [number, number, number, number]>
+
 export interface LogSessionEntry {
   /** sessions 根目录下的相对路径（稳定键） */
   path: string
@@ -41,6 +44,10 @@ export interface LogSessionEntry {
   first: number
   last: number
   days: DayBuckets
+  /** 模型分桶（同 ModelBuckets）。缺 / mv 不符 = 不可信，下次扫描对该文件全量重折补齐 */
+  models?: ModelBuckets
+  /** 模型口径版本（MODELS_V） */
+  mv?: number
   turns: number
   steps: number
   /**
@@ -53,7 +60,7 @@ export interface LogSessionEntry {
   /** 前缀 [0,r) sha256（append 不变性守卫，见 foldZstdSessionSteps seed 路径） */
   h?: string
   /** 折叠状态机 st.last 快照（跨扫描边界的同 turn+step usage 替换去重依赖它），null = 无 */
-  u?: { turn?: number; step?: number; day: string; b: [number, number, number, number] } | null
+  u?: { turn?: number; step?: number; day: string; b: [number, number, number, number]; m?: string } | null
   /** turnSet 快照（轮数计数；缺 = 旧条目，不可续扫） */
   t?: number[]
 }
@@ -117,6 +124,8 @@ export interface ScanResult {
   /** 本地日 → 当日总 token（client 热力图直接消费；payloadFrom 透传为 payload.days） */
   dayTotals: Record<string, number>
   metrics: UsageMetrics
+  /** 模型 → [uncachedInput, output, cacheRead, cacheWrite]。仅含带模型字段的用量；已删会话/孤儿投影无模型明细，不计入 */
+  models: ModelBuckets
   source: {
     logs: number
     orphans: number
@@ -130,6 +139,8 @@ export interface ScanResult {
 }
 
 const CACHE_VERSION = 1
+/** 模型分桶口径版本：条目须带 mv === MODELS_V 才信任其 models / 允许增量续扫（自愈中间版本写入的不完整 models）。 */
+const MODELS_V = 2
 const HOME = os.homedir()
 export const SESSIONS_ROOT = path.join(HOME, '.dsh', 'sessions')
 export const PROJ_DIR = path.join(HOME, '.dsh', 'storages', 'session_projcache', 'sessions')
@@ -359,12 +370,21 @@ function bucketsEqual(a: Buckets, b: Buckets): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]
 }
 
+/** 从已解析事件取模型键（"provider/model"，实测自 data.message.source）；无 → ''（不计入模型统计）。 */
+function modelOfEvent(ev: any): string {
+  const s = ev?.data?.message?.source
+  if (!s || typeof s !== 'object') return ''
+  const prov = typeof s.provider === 'string' ? s.provider : ''
+  const mod = typeof s.model === 'string' ? s.model : ''
+  return prov && mod ? prov + '/' + mod : mod || prov
+}
+
 /**
  * assistant/* 的记账尾段（投影差量 → 归属日分桶）——**唯一实现**。
  * 快路径（readAssistantData）与回退路径（整行 JSON.parse）都汇入此处，
  * 保证两条路径不会各自演化出口径差异。
  */
-function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | undefined, turn: any, step: any): void {
+function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | undefined, turn: any, step: any, model: string): void {
   // `== null` 同时覆盖 undefined 与 null：上游把"未上报 usage"表达为 null 时，
   // 与字段缺失同义处理（跳过本次记账），避免在 bucketsFrom 抛错导致整文件被丢弃。
   if (sample == null || t <= 0) return
@@ -373,16 +393,26 @@ function foldAssistantSample(st: FoldState, t: number, sample: UsageSample | und
   const b = bucketsFrom(sample)
   const last = st.last
   const prev = last !== null && last.turn === turn && last.step === step ? last : null
-  if (prev !== null && bucketsEqual(prev.b, b)) return // 投影：无变化，归属日也不动
+  if (prev !== null && bucketsEqual(prev.b, b)) return // 投影：无变化，归属日/模型也不动
   if (prev !== null) {
     const d = out.days[prev.day]
     if (d) {
       d[0] -= prev.b[0]; d[1] -= prev.b[1]; d[2] -= prev.b[2]; d[3] -= prev.b[3]
     }
+    if (prev.m) {
+      const mb = out.models[prev.m]
+      if (mb) {
+        mb[0] -= prev.b[0]; mb[1] -= prev.b[1]; mb[2] -= prev.b[2]; mb[3] -= prev.b[3]
+      }
+    }
   }
   const d = (out.days[day] ??= [0, 0, 0, 0])
   d[0] += b[0]; d[1] += b[1]; d[2] += b[2]; d[3] += b[3]
-  st.last = { turn, step, day, b }
+  if (model) {
+    const mb = (out.models[model] ??= [0, 0, 0, 0])
+    mb[0] += b[0]; mb[1] += b[1]; mb[2] += b[2]; mb[3] += b[3]
+  }
+  st.last = { turn, step, day, b, m: model }
 }
 
 interface FoldedSession {
@@ -392,6 +422,8 @@ interface FoldedSession {
   first: number
   last: number
   days: DayBuckets
+  /** 模型分桶（同 LogSessionEntry.models） */
+  models: ModelBuckets
   turns: number
   steps: number
 }
@@ -417,8 +449,8 @@ export function foldSessionLines(text: string): FoldedSession {
 
 // --- 折叠状态机（逐行推进；整段折叠与逐帧流式折叠共用同一实现，保证口径唯一） ---
 
-/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。 */
-type LastRef = { turn?: number; step?: number; day: string; b: Buckets } | null
+/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。m = 模型键，'' = 无模型字段。 */
+type LastRef = { turn?: number; step?: number; day: string; b: Buckets; m: string } | null
 
 interface FoldState {
   out: FoldedSession
@@ -452,9 +484,17 @@ function cloneDays(d: DayBuckets): DayBuckets {
   return o
 }
 
+/** 深拷贝模型分桶（同 cloneDays 的理由）。 */
+function cloneModels(m?: ModelBuckets): ModelBuckets {
+  const o: ModelBuckets = {}
+  if (!m) return o
+  for (const k of Object.keys(m)) o[k] = [m[k][0], m[k][1], m[k][2], m[k][3]]
+  return o
+}
+
 function newFoldState(): FoldState {
   return {
-    out: { id: '', cwd: '', title: '', first: 0, last: 0, days: {}, turns: 0, steps: 0 },
+    out: { id: '', cwd: '', title: '', first: 0, last: 0, days: {}, models: {}, turns: 0, steps: 0 },
     turnSet: new Set<number>(),
     last: null,
   }
@@ -564,7 +604,7 @@ function skipJsonValue(line: string, j: number): number {
  * 口径唯一性由回退路径兜底。扫描器严格跳过字符串内容（含转义），故 message 正文里出现的
  * `"usage":` 不会被误命中（实测 26,466 行 0 误判）。
  */
-function readAssistantData(line: string): { turn: number; step: number; usage: UsageSample } | null {
+function readAssistantData(line: string): { turn: number; step: number; usage: UsageSample; model: string } | null {
   let i = 0
   let depth = 0
   let inStr = false
@@ -578,6 +618,8 @@ function readAssistantData(line: string): { turn: number; step: number; usage: U
   let step: number | null = null
   let usageStart = -1
   let usageEnd = -1
+  let srcStart = -1
+  let srcEnd = -1
 
   while (i < line.length) {
     const c = line.charCodeAt(i)
@@ -585,6 +627,18 @@ function readAssistantData(line: string): { turn: number; step: number; usage: U
     if (awaitingValue) {
       if (c === 0x20 || c === 0x09) { i++; continue }
       const wanted = dataDepth > 0 && curKeyDepth === dataDepth
+      // data.message.source（模型来源；实测 message 先于 usage 出现）：捕获值文本后一次性
+      // JSON.parse 取 {provider, model}。缺 source/解析异常 → model=''（不计入模型统计）。
+      if (dataDepth > 0 && curKeyDepth === dataDepth + 1 && curKey === 'source' && c === 0x7b && srcStart < 0) {
+        const e = skipJsonValue(line, i)
+        if (e < 0) return null
+        srcStart = i
+        srcEnd = e
+        awaitingValue = false
+        curKey = null
+        i = e
+        continue
+      }
       if (wanted && curKey === 'usage' && c === 0x7b) {
         const e = skipJsonValue(line, i)
         if (e < 0) return null
@@ -652,7 +706,18 @@ function readAssistantData(line: string): { turn: number; step: number; usage: U
     return null
   }
   if (!usage || typeof usage !== 'object') return null
-  return { turn, step, usage: usage as UsageSample }
+  let model = ''
+  if (srcStart >= 0) {
+    try {
+      const s = JSON.parse(line.slice(srcStart, srcEnd)) as { provider?: unknown; model?: unknown }
+      const prov = typeof s.provider === 'string' ? s.provider : ''
+      const mod = typeof s.model === 'string' ? s.model : ''
+      model = prov && mod ? prov + '/' + mod : mod || prov
+    } catch {
+      model = ''
+    }
+  }
+  return { turn, step, usage: usage as UsageSample, model }
 }
 
 function foldLine(st: FoldState, line: string): void {
@@ -695,7 +760,7 @@ function foldLine(st: FoldState, line: string): void {
     if (d !== null && t > 0) {
       if (out.first === 0 || t < out.first) out.first = t
       if (t > out.last) out.last = t
-      foldAssistantSample(st, t, d.usage, d.turn, d.step)
+      foldAssistantSample(st, t, d.usage, d.turn, d.step, d.model)
       return
     }
     // 回退：整行解析（口径权威路径）
@@ -759,7 +824,7 @@ function foldLine(st: FoldState, line: string): void {
     return
   }
   if (ty !== 'assistant/message' && ty !== 'assistant/attempt') return
-  foldAssistantSample(st, t, usageOf(ev), ev?.data?.turn, ev?.data?.step)
+  foldAssistantSample(st, t, usageOf(ev), ev?.data?.turn, ev?.data?.step, modelOfEvent(ev))
 }
 
 function finishFold(st: FoldState): FoldedSession {
@@ -1228,6 +1293,22 @@ function collectOrphans(cache: CacheDoc, proj: Map<string, ProjMeta>): boolean {
   return changed
 }
 
+/** 模型分桶合计：活页日志会话 + 已删归档条目（后者仅本版本上线后归档的才带 models）。 */
+function mergeModels(sessions: Record<string, LogSessionEntry>, archived: Record<string, LogSessionEntry>): ModelBuckets {
+  const out: ModelBuckets = {}
+  const add = (m?: ModelBuckets): void => {
+    if (!m) return
+    for (const k of Object.keys(m)) {
+      const v = m[k]
+      const o = (out[k] ??= [0, 0, 0, 0])
+      o[0] += v[0]; o[1] += v[1]; o[2] += v[2]; o[3] += v[3]
+    }
+  }
+  for (const s of Object.values(sessions)) add(s.models)
+  for (const a of Object.values(archived)) add(a.models)
+  return out
+}
+
 async function runScan(): Promise<ScanResult> {
   if (typeof zstdDecompressSync !== 'function') {
     // 早失败：否则缺 zstd 支持的运行时会把每帧解码吞成 dropped，静默产出 0 数据
@@ -1263,7 +1344,8 @@ async function runScan(): Promise<ScanResult> {
       continue
     }
     const prev = cache.sessions[rel]
-    if (prev && prev.mtime === st.mtimeMs && prev.size === st.size) {
+    // models 不可信（缺失或口径版本不符）→ 视为未命中：本轮对该文件全量重折补齐（一次性成本 ~0.8s）
+    if (prev && prev.mtime === st.mtimeMs && prev.size === st.size && prev.models !== undefined && prev.mv === MODELS_V) {
       cacheHits += 1
       continue
     }
@@ -1279,7 +1361,7 @@ async function runScan(): Promise<ScanResult> {
         Array.isArray(prev.t) &&
         digestPrefix(buf, prev.r) === prev.h
       let seed: FoldSeed | null = null
-      if (resumable && prev) {
+      if (resumable && prev && prev.mv === MODELS_V) {
         seed = {
           off: prev.r as number,
           st: {
@@ -1287,10 +1369,11 @@ async function runScan(): Promise<ScanResult> {
               id: prev.id, cwd: prev.cwd, title: prev.title,
               first: prev.first, last: prev.last,
               days: cloneDays(prev.days),
+              models: cloneModels(prev.models),
               turns: 0, steps: prev.steps,
             },
             turnSet: new Set<number>(prev.t as number[]),
-            last: prev.u ? { turn: prev.u.turn, step: prev.u.step, day: prev.u.day, b: prev.u.b.slice() as Buckets } : null,
+            last: prev.u ? { turn: prev.u.turn, step: prev.u.step, day: prev.u.day, b: prev.u.b.slice() as Buckets, m: prev.u.m ?? '' } : null,
           },
         }
       }
@@ -1312,11 +1395,13 @@ async function runScan(): Promise<ScanResult> {
         first: folded.first,
         last: folded.last,
         days: folded.days,
+        models: folded.models,
+        mv: MODELS_V,
         turns: folded.turns,
         steps: folded.steps,
         r: resume.r,
         h: resume.h,
-        u: resume.u ? { turn: resume.u.turn, step: resume.u.step, day: resume.u.day, b: [resume.u.b[0], resume.u.b[1], resume.u.b[2], resume.u.b[3]] } : null,
+        u: resume.u ? { turn: resume.u.turn, step: resume.u.step, day: resume.u.day, b: [resume.u.b[0], resume.u.b[1], resume.u.b[2], resume.u.b[3]], m: resume.u.m } : null,
         t: resume.t,
       }
       decoded += 1
@@ -1349,6 +1434,7 @@ async function runScan(): Promise<ScanResult> {
   return {
     dayTotals,
     metrics,
+    models: mergeModels(cache.sessions, archived),
     source: {
       logs: rels.length,
       orphans: Object.keys(cache.orphans).length,

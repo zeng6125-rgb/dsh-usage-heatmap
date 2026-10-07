@@ -1,5 +1,7 @@
 /** 一个会话某天的分桶：[uncachedInput, output, cacheRead, cacheWrite] */
 export type DayBuckets = Record<string, [number, number, number, number]>;
+/** 模型分桶："provider/model" → [uncachedInput, output, cacheRead, cacheWrite] */
+export type ModelBuckets = Record<string, [number, number, number, number]>;
 export interface LogSessionEntry {
     /** sessions 根目录下的相对路径（稳定键） */
     path: string;
@@ -13,6 +15,10 @@ export interface LogSessionEntry {
     first: number;
     last: number;
     days: DayBuckets;
+    /** 模型分桶（同 ModelBuckets）。缺 / mv 不符 = 不可信，下次扫描对该文件全量重折补齐 */
+    models?: ModelBuckets;
+    /** 模型口径版本（MODELS_V） */
+    mv?: number;
     turns: number;
     steps: number;
     /**
@@ -30,6 +36,7 @@ export interface LogSessionEntry {
         step?: number;
         day: string;
         b: [number, number, number, number];
+        m?: string;
     } | null;
     /** turnSet 快照（轮数计数；缺 = 旧条目，不可续扫） */
     t?: number[];
@@ -89,6 +96,8 @@ export interface ScanResult {
     /** 本地日 → 当日总 token（client 热力图直接消费；payloadFrom 透传为 payload.days） */
     dayTotals: Record<string, number>;
     metrics: UsageMetrics;
+    /** 模型 → [uncachedInput, output, cacheRead, cacheWrite]。仅含带模型字段的用量；已删会话/孤儿投影无模型明细，不计入 */
+    models: ModelBuckets;
     source: {
         logs: number;
         orphans: number;
@@ -129,6 +138,8 @@ interface FoldedSession {
     first: number;
     last: number;
     days: DayBuckets;
+    /** 模型分桶（同 LogSessionEntry.models） */
+    models: ModelBuckets;
     turns: number;
     steps: number;
 }
@@ -137,12 +148,13 @@ interface FoldedSession {
  * tools/byte-equiv.mjs 用它做「整段折叠 == 流式折叠」的交叉验证锚点。保留导出与语义。
  */
 export declare function foldSessionLines(text: string): FoldedSession;
-/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。 */
+/** st.last（同 turn+step usage 替换去重指针）。turn/step 可缺（事件 data 不带时原样存 undefined）。m = 模型键，'' = 无模型字段。 */
 type LastRef = {
     turn?: number;
     step?: number;
     day: string;
     b: Buckets;
+    m: string;
 } | null;
 interface FoldState {
     out: FoldedSession;

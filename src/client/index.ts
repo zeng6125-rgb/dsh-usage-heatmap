@@ -83,7 +83,7 @@ var CSS = [
   /* 指标卡片行 */
   '.uh-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(164px,1fr));gap:8px;margin:10px 0}',
   '.uh-metricLabel{display:flex;align-items:center;gap:7px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#646a73)}',
-  '.uh-metricIcon{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:4px;font-size:10px;line-height:1;flex:none;color:#1677ff;background:rgb(22 119 255 / 9%)}',
+  '.uh-metricIcon{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:5px;font-size:12px;line-height:1;flex:none;color:#1677ff;background:rgb(22 119 255 / 9%)}',
   '.uh-metricValue{margin-top:4px;font-size:20px;font-weight:650;line-height:26px;letter-spacing:-.01em;color:var(--dsw-alias-label-primary,#1f2329);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-metricSub{margin-top:3px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uh-metricSub b{font-weight:600;color:var(--dsw-alias-label-secondary,#646a73)}',
@@ -182,6 +182,15 @@ var CSS = [
   '.uh-tip em{font-style:normal;color:rgb(255 255 255 / 65%);font-size:11px}',
 
   /* 洞察列表 */
+  /* 模型消耗卡：行式列表（名称 + 值 + 底部占比条） */
+  '.uh-modelList{margin-top:2px;display:flex;flex-direction:column;gap:5px}',
+  '.uh-modelRow{position:relative;display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;background:var(--dsw-alias-fill-tertiary,rgb(31 35 41 / 4%))}',
+  '.uh-modelName{font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary,#1f2329);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}',
+  '.uh-modelVal{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#646a73);font-variant-numeric:tabular-nums;flex:none}',
+  '.uh-modelBar{position:absolute;left:0;bottom:0;height:2px;border-radius:0 2px 2px 0;background:var(--uh-l3,#79bbff);pointer-events:none}',
+  '.uh-modelMore{font-size:11px;color:var(--dsw-alias-label-tertiary,#8f959e);background:none;padding:1px 10px 0}',
+  '.uh-modelMiss{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8f959e);padding:2px 2px 0}',
+
   /* 洞察列表：单列（10-05 用户选定，双列密度方案被否——观感优先，内容超高时 .uh-page 内部滚动） */
   '.uh-insights{display:grid;gap:9px}',
   '.uh-insight{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#1f2329)}',
@@ -1121,6 +1130,60 @@ function UsageHeatmapPanel(): any {
     )
 
     kids.push(h(HeatmapCard, { key: 'heat', days: days, metrics: m }))
+
+    /* 模型消耗：total 降序 top 8 + 其他 + 差额行（已删归档/孤儿投影无逐模型明细，不计入） */
+    var modelMap = (data && data.models) || {}
+    var modelRows: Array<{ name: string; total: number; input: number; output: number; cached: number }> = []
+    for (var mk in modelMap) {
+      var mb = modelMap[mk]
+      modelRows.push({ name: mk, total: mb[0] + mb[1] + mb[2] + mb[3], input: mb[0], output: mb[1], cached: mb[2] })
+    }
+    if (modelRows.length) {
+      modelRows.sort(function (a, b) { return b.total - a.total })
+      var modelSum = 0
+      for (var mi = 0; mi < modelRows.length; mi++) modelSum += modelRows[mi].total
+      var mTop = modelRows.slice(0, 8)
+      var mRestN = modelRows.length - mTop.length
+      var mRestT = 0
+      for (var mr = 8; mr < modelRows.length; mr++) mRestT += modelRows[mr].total
+      var mMiss = Math.max(0, m.totalTokens - modelSum)
+      var mMax = mTop[0].total || 1
+      var mItems = []
+      for (var mi2 = 0; mi2 < mTop.length; mi2++) {
+        var row = mTop[mi2]
+        mItems.push(
+          h('div', {
+            key: 'm' + mi2,
+            className: 'uh-modelRow',
+            title: row.name + '：共 ' + fmtExact(row.total) + ' tokens（未缓存入 ' + fmtTokens(row.input)
+              + ' · 输出 ' + fmtTokens(row.output) + ' · 缓存读 ' + fmtTokens(row.cached) + '）',
+          },
+            h('span', { className: 'uh-modelName' }, row.name),
+            h('span', { className: 'uh-modelVal' }, fmtTokens(row.total)),
+            h('i', { className: 'uh-modelBar', style: { width: Math.max(2, Math.round((row.total / mMax) * 100)) + '%' } }),
+          ),
+        )
+      }
+      if (mRestN > 0) mItems.push(h('div', { key: 'mRest', className: 'uh-modelRow uh-modelMore' }, '其他 ' + mRestN + ' 个模型 · ' + fmtTokens(mRestT)))
+      if (mMiss > 0) mItems.push(h('div', { key: 'mMiss', className: 'uh-modelMiss' }, '另有 ' + fmtTokens(mMiss) + ' tokens 未按模型计入（已删除会话与投影缓存无明细）'))
+      kids.push(
+        h(
+          'div',
+          { className: 'uh-card uh-section', key: 'models' },
+          h(
+            'div',
+            { className: 'uh-sectionHead' },
+            h(
+              'div',
+              null,
+              h('h4', { className: 'uh-sectionTitle' }, '模型消耗'),
+              h('p', { className: 'uh-sectionDesc' }, '按模型汇总 token 消耗 · 共 ' + modelRows.length + ' 个'),
+            ),
+          ),
+          h('div', { className: 'uh-modelList' }, mItems),
+        ),
+      )
+    }
 
     var insights = buildInsights(days, m)
     if (insights.length) {

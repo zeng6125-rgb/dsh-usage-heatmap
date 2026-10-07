@@ -103,6 +103,7 @@ function payloadFrom(r: ScanResult, title: string): any {
     title,
     days: r.dayTotals,
     metrics: r.metrics,
+    models: r.models,
     source: r.source,
     updatedAt: r.source.updatedAt,
   }
