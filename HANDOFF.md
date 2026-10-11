@@ -1,6 +1,6 @@
-# 工作记忆 / HANDOFF（2026-10-07）
+# 工作记忆 / HANDOFF（2026-10-12）
 
-> 本文件是会话间交接用，未提交进 git（files 白名单不含它，发布不受影响）。
+> 本文件是会话间交接用（files 白名单不含它，发布不受影响）；**实际被 git 跟踪**。
 > 权威代码状态 = `src/index.ts`、`src/aggregate.ts`、`src/client/index.ts` + 本文件。
 
 ## 1. 当前身份（v0.1.0 起已改名，别再写旧名）
@@ -27,10 +27,12 @@
 
 ## 3. 发布状态
 
-- GitHub：**master `1eb01be` 已推送**（10-08：chore(release): 0.1.3 + tag v0.1.3）；Releases v0.1.0→v0.1.1→v0.1.2→**v0.1.3（Latest，10-08）**，资产一律 `dsh-usage-heatmap.tgz`（**版本无关命名，不得带版本号**——发版需把 npm pack 产物复制成无版本名再 gh 挂）。0.1.2 内容：面板高度自适应修复链 `ce59d32`（height:100% 贴满）→`edfe64f`（uh-fill 只 grow 不 shrink）→`8b0848f`（纵向密度压缩）→`ae94bd3`（**max-height 上限 150→85px，用户亲自定位：其 0.4.6 无导航弹窗 chrome 仅 ~85px**）→`20a0fd3`（洞察列表保持单列——双列密度方案用户否决，观感优先，超高时面板内部滚动）
-- **0.1.3 已发（10-08，用户口令 m01999「发吧」+ m02006「可以」批准描述）**：17 commits（v0.1.2..1de9e16）+ bump `1eb01be`。内容=模型消耗卡（双版式：按日期堆叠多色柱默认/按模型垂直柱；悬停三行明细+图例联动高亮；差额行诚实披露）+ 图标 18px + 星期洞察大头日期证据 + 归档 dayModels 精确重建修复 + Windows 字重 550 割裂修复 + 性能画像/字节路径回退/死代码清理。release notes 曾落盘 release-notes-0.1.3.md（gh --notes-file 用）后删，内容在 release 页
-- npm：**`dsh-usage-heatmap@0.1.3` 已发布**（10-08 03:55Z，账号 jiaszeng，latest 标签）。**npm publish 是异步的**：PUT 返回 **202 Accepted**（非 201），registry 可见延迟实测 ~4min（publish 19:51:23Z → versions 出现 19:55:41Z）——发布后 `npm view` 短时仍旧版属正常，勿误判失败重发；核实看 debug log `http fetch PUT 202` + exit 0，或等 ~5min 再查。历史下载：0.1.0 = 335（09-04~10-03）
-- **内核适配（0.1.1 变更点）**：peerDeps `@deepseek-ai/dsh-tools` / `@deepseek-ai/dsh-client-ui-slots` 追加 `|| >=0.2.0-rc.1 <2`（本机宿主 Desktop 0.4.4 捆绑 0.2.0-rc.2；node-semver 预发布规则下旧段 `<2` 匹不上 0.2.0-rc.2 预发布，必须加段；0.1.x 段保留向后兼容）。typecheck 0 错 + 热重载 [active] + 不变量 sum==totalTokens（21,236,180,567）均实测通过
+- GitHub：master **`a1bf932` 已推送**（10-12：b463f46 perf + a1bf932 chore(release): 0.1.4 + tag v0.1.4）；Releases v0.1.0→…→v0.1.3→**v0.1.4（Latest，10-12）**，资产一律 `dsh-usage-heatmap.tgz`（**版本无关命名，不得带版本号**——发版需把 npm pack 产物复制成无版本名再 gh 挂）
+- **0.1.4 已发（10-12，用户口令「继续优化一下性能，和缩短获取的时间，然后发版」直接授权，未要求预览描述）**：内容=① 目录成员 memo（`listLogFiles`，mtime/ctime/ino 三重失效+未访问清理，仍逐轮 stat）② 投影扫描每 4 文件无条件让出 → 8ms 耗时预算 ③ client 可见页 15s 轮询直接 `fresh=1`（原 SWR 最坏 ~45s 才见新值）、隐藏页暂停轮询、强刷排队在在途普通请求后合并、相同响应续 TTL ④ 新增 `tests/performance.test.mjs` 14 条（node --test + ts 转译注入 mock fs/时钟，`npm test`）⑤ 采样守卫检测范围文档如实标注。**实测：交错 A/B 全命中扫描中位 84.8→52.1ms（1.63x，`tools/scan-latency-ab.json`）；独立基准 176.9→69.3ms（`tools/scan-latency-{before,yield,after}.json`）；HTTP fresh 端到端 ~49-73ms**。审计 subagent APPROVE（无 Critical/Required）；注意其 caveat：fresh 响应的 updatedAt/scanMs 每次变，不能宣称轮询零重渲染。**已否决勿再做**：native readdir（sync/async 均更慢）、JSON 字典压缩（载荷仅 13KB）、字节路径（10-08 实测更慢）
+- **0.1.3 已发（10-08）**：17 commits + bump `1eb01be`。内容=模型消耗卡（双版式+悬停+图例联动）+ 图标 18px + 星期洞察证据 + 归档 dayModels 重建 + Windows 字重修复 + 性能画像。release notes 在 release 页
+- npm：**`dsh-usage-heatmap@0.1.4` 已发布**（10-12，账号 jiaszeng，latest 标签；registry 可见延迟 ~4min 属正常勿重发）。历史：0.1.3（10-08 03:55Z）、0.1.0 下载 335（09-04~10-03）
+- **测试基线**：`npm test` = **14/14 绿**（目录失效语义、投影让出预算、客户端请求调度、隔离内存 fs 端到端 append/新增/删除口径不变；fixture 事件字段顺序必须 message/source 先于 usage——镜像真实 writer，否则快路径拿不到模型）。`package-lock.json` version 字段停在 0.1.2 未同步（无害，files 白名单不含、dsh plugin add 不用；要修跑 `npm i --package-lock-only`）
+- **内核适配（0.1.1 变更点）**：peerDeps `@deepseek-ai/dsh-tools` / `@deepseek-ai/dsh-client-ui-slots` 追加 `|| >=0.2.0-rc.1 <2`（node-semver 预发布规则下旧段 `<2` 匹不上 0.2.0-rc.2；0.1.x 段保留向后兼容）
 - 市场：PR #5838 **已合并**（2026-09-26）；probe 已于 10-05 写入 npm 字段（待办②完结）；0.1.1 上 npm 后 version/downloads 下一轮日更自动跟随
 - 构建链：`dev_build_plugin(D:\workroom\dsh-usage-heatmap)` → `dev_reload_package(usage-heatmap)`；typecheck `npm run typecheck`
 
