@@ -486,11 +486,21 @@ interface FoldResume {
   t: number[]
 }
 
-/** 前缀 [0,end) 的 sha256 hex（end<=0 → 空串；end>buf 长度按长度截——越界意味着前缀被截，摘要必不符回全量）。 */
+/** 前缀 [0,end) 的守卫摘要：头/尾采样窗 + 长度的 sha256（'v2:' 前缀标记格式代际）。
+ *  旧实现是全前缀 sha256（实测 ~7.5ms/MB）：稳态下每次轮询对脏文件算两遍（L1440 守卫 +
+ *  L926 存新 h），成本随活跃日志线性涨——「扫描越来越慢」的主因。
+ *  采样依据：日志仅追加，守卫只需识别「前缀被改写/截断」——头窗抓头部改写、尾窗抓续扫
+ *  边界区改写、长度抓截断；中部单字节改写是盲区，但 append-only 不改中部，真发生迁移/
+ *  损坏时 mtime/size 外守卫先不符回全量。v1（64-hex）与 v2 摘要必不符 → 一次性全折自愈升级。 */
+const GUARD_WIN = 512 * 1024
 function digestPrefix(buf: Buffer, end: number): string {
   if (end <= 0) return ''
   if (end > buf.length) end = buf.length
-  return crypto.createHash('sha256').update(buf.subarray(0, end)).digest('hex')
+  const h = crypto.createHash('sha256')
+  h.update(buf.subarray(0, Math.min(end, GUARD_WIN)))
+  if (end > GUARD_WIN) h.update(buf.subarray(end - GUARD_WIN, end))
+  h.update(String(end))
+  return 'v2:' + h.digest('hex')
 }
 
 /** 深拷贝日分桶（续扫状态机在 days 上原地加减，不得共享引用污染缓存条目）。 */
@@ -1047,21 +1057,30 @@ async function readProjcache(): Promise<Map<string, ProjMeta>> {
 // 缓存读写
 // ---------------------------------------------------------------------------
 
+/** 进程内缓存 memo：runScan 是 cache.json 的唯一写者（inflight 串行化），每轮 15s 轮询
+ *  无需重读重 parse（~1MB JSON 每次数十 ms）；saveCache 同步刷新 memo。模块重导入（热重载）
+ *  自然失效。 */
+let cacheMemo: CacheDoc | null = null
+
 function loadCache(): CacheDoc {
+  if (cacheMemo) return cacheMemo
   const fresh: CacheDoc = { version: CACHE_VERSION, sessions: {}, orphans: {}, archived: {}, lastRun: 0 }
   try {
     const doc = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')) as CacheDoc
     if (doc && doc.version === CACHE_VERSION && doc.sessions && doc.orphans) {
       if (!doc.archived) doc.archived = {} // 旧版缓存升级兼容
+      cacheMemo = doc
       return doc
     }
   } catch {
     /* 不存在/损坏 → 重建 */
   }
+  cacheMemo = fresh
   return fresh
 }
 
 function saveCache(doc: CacheDoc): void {
+  cacheMemo = doc
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true })
     const tmp = CACHE_FILE + '.' + Math.random().toString(36).slice(2, 8) + '.tmp' // 随机后缀防并发写互踩
@@ -1435,7 +1454,7 @@ async function runScan(): Promise<ScanResult> {
       const resumable =
         !!prev &&
         typeof prev.r === 'number' && prev.r > 0 && prev.r <= buf.length &&
-        typeof prev.h === 'string' && prev.h.length === 64 &&
+        typeof prev.h === 'string' && prev.h.length >= 64 &&
         Array.isArray(prev.t) &&
         digestPrefix(buf, prev.r) === prev.h
       let seed: FoldSeed | null = null
