@@ -32,7 +32,7 @@ export interface LogSessionEntry {
      * 下次变更时全量折叠并补齐本组字段，自动升级）。
      */
     r?: number;
-    /** 前缀 [0,r) sha256（append 不变性守卫，见 foldZstdSessionSteps seed 路径） */
+    /** 前缀 [0,r) 的头尾采样 sha256（append-only 守卫，非任意改写检测，见 digestPrefix） */
     h?: string;
     /** 折叠状态机 st.last 快照（跨扫描边界的同 turn+step usage 替换去重依赖它），null = 无 */
     u?: {
@@ -173,7 +173,7 @@ interface FoldState {
 interface FoldResume {
     /** 已消费的完整帧字节边界（撕裂尾帧不计入；下次续解起点）。-1 = 本次未闭合尾部不可续（下次全量） */
     r: number;
-    /** 前缀 [0,r) 的 sha256（append 不变性守卫：改写/迁移/压缩转换 → 摘要不符回全量） */
+    /** 前缀 [0,r) 的头尾采样 sha256（采样窗口或长度不符时回全量） */
     h: string;
     /** st.last 快照（原始值；JSON 侧 undefined 键会消失，恢复时按缺省 undefined 处理） */
     u: LastRef;

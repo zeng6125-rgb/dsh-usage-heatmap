@@ -62,7 +62,7 @@ export interface LogSessionEntry {
    * 下次变更时全量折叠并补齐本组字段，自动升级）。
    */
   r?: number
-  /** 前缀 [0,r) sha256（append 不变性守卫，见 foldZstdSessionSteps seed 路径） */
+  /** 前缀 [0,r) 的头尾采样 sha256（append-only 守卫，非任意改写检测，见 digestPrefix） */
   h?: string
   /** 折叠状态机 st.last 快照（跨扫描边界的同 turn+step usage 替换去重依赖它），null = 无 */
   u?: { turn?: number; step?: number; day: string; b: [number, number, number, number]; m?: string } | null
@@ -478,7 +478,7 @@ interface FoldState {
 interface FoldResume {
   /** 已消费的完整帧字节边界（撕裂尾帧不计入；下次续解起点）。-1 = 本次未闭合尾部不可续（下次全量） */
   r: number
-  /** 前缀 [0,r) 的 sha256（append 不变性守卫：改写/迁移/压缩转换 → 摘要不符回全量） */
+  /** 前缀 [0,r) 的头尾采样 sha256（采样窗口或长度不符时回全量） */
   h: string
   /** st.last 快照（原始值；JSON 侧 undefined 键会消失，恢复时按缺省 undefined 处理） */
   u: LastRef
@@ -490,8 +490,9 @@ interface FoldResume {
  *  旧实现是全前缀 sha256（实测 ~7.5ms/MB）：稳态下每次轮询对脏文件算两遍（L1440 守卫 +
  *  L926 存新 h），成本随活跃日志线性涨——「扫描越来越慢」的主因。
  *  采样依据：日志仅追加，守卫只需识别「前缀被改写/截断」——头窗抓头部改写、尾窗抓续扫
- *  边界区改写、长度抓截断；中部单字节改写是盲区，但 append-only 不改中部，真发生迁移/
- *  损坏时 mtime/size 外守卫先不符回全量。v1（64-hex）与 v2 摘要必不符 → 一次性全折自愈升级。 */
+ *  边界区改写、长度抓截断；长前缀中部改写是盲区，正确性依赖日志 append-only 契约。
+ *  mtime/size 变更只触发守卫检查，不保证发现采样窗外改写；v1（64-hex）与 v2 摘要必不符，
+ *  变更文件会全折一次自愈升级。 */
 const GUARD_WIN = 512 * 1024
 function digestPrefix(buf: Buffer, end: number): string {
   if (end <= 0) return ''
@@ -954,12 +955,24 @@ export function foldZstdSession(buf: Buffer) {
 // 文件枚举
 // ---------------------------------------------------------------------------
 
+/** 目录成员 memo：每轮仍 stat 全部目录/日志；新增、删除或替换目录时重读成员，不缓存整棵日志列表。 */
+const logDirMemo = new Map<string, { mtime: number; ctime: number; ino: number; entries: fs.Dirent[] }>()
+
 function listLogFiles(root: string): string[] {
   const out: string[] = []
+  const seen = new Set<string>()
   const walk = (dir: string): void => {
     let ents: fs.Dirent[]
     try {
-      ents = fs.readdirSync(dir, { withFileTypes: true })
+      const st = fs.statSync(dir)
+      const memo = logDirMemo.get(dir)
+      if (memo && memo.mtime === st.mtimeMs && memo.ctime === st.ctimeMs && memo.ino === st.ino) {
+        ents = memo.entries
+      } else {
+        ents = fs.readdirSync(dir, { withFileTypes: true })
+        logDirMemo.set(dir, { mtime: st.mtimeMs, ctime: st.ctimeMs, ino: st.ino, entries: ents })
+      }
+      seen.add(dir)
     } catch {
       return
     }
@@ -970,6 +983,7 @@ function listLogFiles(root: string): string[] {
     }
   }
   walk(root)
+  for (const dir of logDirMemo.keys()) if (!seen.has(dir)) logDirMemo.delete(dir)
   return out
 }
 
@@ -1000,9 +1014,13 @@ async function readProjcache(): Promise<Map<string, ProjMeta>> {
     return map
   }
   const seen = new Set<string>()
-  let n = 0
+  let sliceAt = Date.now() + 8
   for (const f of files) {
-    if ((n++ & 3) === 0) await new Promise<void>((r) => setImmediate(r)) // 每 4 个文件让出事件循环
+    // 命中 memo 的 stat 路径很短；按耗时而非文件数让出，避免每 4 个命中也排一次宏任务。
+    if (Date.now() >= sliceAt) {
+      await new Promise<void>((r) => setImmediate(r))
+      sliceAt = Date.now() + 8
+    }
     if (!f.endsWith('.json')) continue
     const key = f.replace(/\.json$/, '')
     seen.add(key)

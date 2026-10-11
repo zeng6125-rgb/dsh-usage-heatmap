@@ -10,7 +10,7 @@ An all-local token usage dashboard for the DeepSeek Harness settings page.
 - **热力图**：GitHub 风格日历，每格 = 当日用量（周一为一周之始），可切「每日 / 每周 / 累计」三档；行标一/三/五/日与格子按同一 7 行网格对齐；列数随容器宽度自适应。
 - **活动洞察**：峰值日占比、连续活跃区间、会话构成、最长会话、子代理占比、缓存读取占比、今日四桶（未缓存输入 / 输出 / 缓存读 / 缓存写）。
 - **不丢数**：会话日志被删后，历史 token 仍从投影缓存（`session_projcache`）与已扫入的归档分桶中保留；面板把「已删归档」与「孤儿投影」分开标注。
-- **性能**：会话日志为仅追加的 zstd 帧格式，面板按帧边界**增量续解**——文件变更时只解码折叠尾部新帧，而非整文件重扫；投影文件按 mtime 记忆化、逐帧让出事件循环、内容未变不重渲染、持久化快照使重启首帧约 350ms；面板根为自滚动容器（`will-change: scroll-position`），滚动走合成器线程。
+- **性能**：会话日志为仅追加的 zstd 帧格式，面板按帧边界**增量续解**——文件变更时只解码折叠尾部新帧，而非整文件重扫；目录成员与投影文件记忆化，仍逐轮检查目录与日志变更；按耗时让出事件循环，持久化快照使重启首帧秒开。可见面板每 15 秒直接获取本次扫描结果，隐藏页暂停轮询，避免旧缓存多等一轮；面板根为自滚动容器（`will-change: scroll-position`），滚动走合成器线程。
 
 ## 安装 / Install
 
@@ -46,13 +46,14 @@ dsh plugin add https://github.com/zeng6125-rgb/dsh-usage-heatmap/releases/latest
 | 快照 | `~/.dsh/storages/usage-heatmap/last-state.json` | 重启后首帧秒开 |
 
 > 逐日分桶依赖会话日志中的事件时间戳；缺失时回退到 `createdAt` / 文件 mtime 摊分。
-> 增量续解带前缀 sha256 守卫：日志被改写/迁移时自动回退全量折叠，口径逐字节恒等。
+> 增量续解使用前缀头尾各 512KB 与长度的采样 sha256 守卫；采样不符或续扫边界失效时回退全量折叠。正确性依赖 DSH 日志仅追加的契约：长前缀中部改写不在采样检测范围内，不承诺识别任意文件篡改。
 
 ## 开发 / Development
 
 ```bash
 DSH_CHECKOUT=<dsh source checkout> bash scripts/build.sh   # src/ → lib/
 npm run typecheck                                          # tsc --noEmit
+npm test                                                   # 性能与数据获取回归测试
 ```
 
 `scripts/build.sh` 需要一份 DSH 源码检出（`DSH_CHECKOUT`，或 `~/dsh-harness` / `~/dsh` / `~/.dsh/dsh-harness` 之一）来链接 `@deepseek-ai/*` 与 `cordis`；终端用户安装时用的是仓库里已提交的 `lib/`，不需要这一步。
