@@ -32,7 +32,7 @@ test('mtime invalidation mutation is caught by directory membership tests', asyn
   }
   await check(load('src/aggregate.ts', 'listLogFiles', { 'node:fs': io }))
   stamp = 1; name = 'session.v4.jsonl.zstd'
-  const mutant = load('src/aggregate.ts', 'listLogFiles', { 'node:fs': io }, {}, s => s.replace('memo.mtime === st.mtimeMs', 'true'))
+  const mutant = load('src/aggregate.ts', 'listLogFiles', { 'node:fs': io }, {}, s => s.replace('hit.mtime === st.mtimeMs', 'true'))
   await assert.rejects(() => check(mutant), { code: 'ERR_ASSERTION' })
 })
 
@@ -60,6 +60,30 @@ test('unchanged log directories reuse enumeration while returning every log', as
   assert.deepEqual(await f.api.listLogFiles(f.root), first)
   assert.equal(first.length, 1)
   assert.equal(f.reads(), reads, 'a cache-hit scan must not re-read unchanged directories')
+})
+
+test('cache-hit log enumeration performs no path joins or relative computations', async () => {
+  let joins = 0, relatives = 0
+  const realPath = require('node:path')
+  const spyPath = { ...realPath, join: (...a) => { joins++; return realPath.join(...a) }, relative: (...a) => { relatives++; return realPath.relative(...a) } }
+  const root = path.resolve('path-spy-fixture')
+  const sub = path.join(root, 'one')
+  const dirent = (name, directory) => ({ name, isDirectory: () => directory, isFile: () => !directory })
+  const dirs = new Map([
+    [root, { entries: [dirent('one', true)], mtimeMs: 1, ctimeMs: 1, ino: root }],
+    [sub, { entries: [dirent('session.v4.jsonl.zstd', false)], mtimeMs: 1, ctimeMs: 1, ino: sub }],
+  ])
+  const io = { ...fs,
+    statSync(d) { const x = dirs.get(String(d)); if (!x) throw new Error('ENOENT'); return x },
+    readdirSync(d) { const x = dirs.get(String(d)); if (!x) throw new Error('ENOENT'); return x.entries },
+  }
+  const api = load('src/aggregate.ts', 'listLogFiles', { 'node:fs': io, 'node:path': spyPath })
+  const first = await api.listLogFiles(root)
+  assert.deepEqual(first, [path.join('one', 'session.v4.jsonl.zstd')])
+  joins = 0; relatives = 0
+  assert.deepEqual(await api.listLogFiles(root), first)
+  assert.equal(joins, 0, 'a memo hit must not join paths again')
+  assert.equal(relatives, 0, 'a memo hit must not compute relative paths again')
 })
 
 test('directory membership changes reveal new logs and remove deleted logs', async () => {
@@ -95,6 +119,75 @@ test('directory identity invalidates cached members after same-timestamp replace
   await f.api.listLogFiles(f.root)
   f.set(path.join(f.root, 'one'), [['session.v5.jsonl.zstd']], 1, 'replacement')
   assert.deepEqual(await f.api.listLogFiles(f.root), [path.join('one', 'session.v5.jsonl.zstd')])
+})
+
+test('unchanged scan reuses derived aggregates instead of recomputing every bucket', async () => {
+  // 用 isolated fixture：连续两轮全命中且未跨日，dayTotals/metrics/models/dayModels 必须同引用
+  const home = path.resolve('reuse-fixture-home')
+  const root = path.join(home, '.dsh', 'sessions')
+  const cwd = path.join(root, 'workspace')
+  const logDir = path.join(cwd, 'session-one')
+  const logFile = path.join(logDir, 'session.v4.jsonl.zstd')
+  const dirent = (name, directory) => ({ name, isDirectory: () => directory, isFile: () => !directory })
+  const dirs = new Map([
+    [root, { entries: [dirent('workspace', true)], mtimeMs: 1, ctimeMs: 1, ino: root }],
+    [cwd, { entries: [dirent('session-one', true)], mtimeMs: 1, ctimeMs: 1, ino: cwd }],
+    [logDir, { entries: [dirent('session.v4.jsonl.zstd', false)], mtimeMs: 1, ctimeMs: 1, ino: logDir }],
+  ])
+  const time = new Date(2026, 9, 12, 3).getTime()
+  const ev = { type: 'assistant/message', time, data: { turn: 1, step: 1, message: { source: { provider: 'fixture', model: 'model' } }, usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0 } } }
+  const buf = zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: 'session', id: 'session-one', cwd: 'fixture' }) + '\n' + JSON.stringify(ev) + '\n'))
+  const files = new Map([[logFile, { data: buf, mtimeMs: 1 }]])
+  const io = { ...fs,
+    readdirSync(d) { const x = dirs.get(String(d)); if (!x) throw new Error('ENOENT'); return x.entries },
+    statSync(f) { const x = files.get(String(f)) || dirs.get(String(f)); if (!x) throw new Error('ENOENT'); return { mtimeMs: x.mtimeMs, size: x.data ? x.data.length : 0 } },
+    readFileSync(f) { const x = files.get(String(f)); if (!x) throw new Error('ENOENT'); return x.data },
+    mkdirSync() {}, writeFileSync() {}, renameSync() {},
+  }
+  const api = load('src/aggregate.ts', 'scan', { 'node:fs': io, 'node:os': { ...os, homedir: () => home } })
+  const a = await api.scan()
+  const b = await api.scan()
+  assert.equal(b.source.decoded, 0, 'second scan is a full cache hit')
+  assert.equal(b.dayTotals, a.dayTotals, 'dayTotals reused')
+  assert.equal(b.metrics, a.metrics, 'metrics reused')
+  assert.equal(b.models, a.models, 'models reused')
+  assert.equal(b.dayModels, a.dayModels, 'dayModels reused')
+})
+
+test('derived aggregates are recomputed after a data change, never served stale', async () => {
+  const home = path.resolve('reuse-change-home')
+  const root = path.join(home, '.dsh', 'sessions')
+  const cwd = path.join(root, 'workspace')
+  const logDir = path.join(cwd, 'session-one')
+  const logFile = path.join(logDir, 'session.v4.jsonl.zstd')
+  const dirent = (name, directory) => ({ name, isDirectory: () => directory, isFile: () => !directory })
+  const dirs = new Map([
+    [root, { entries: [dirent('workspace', true)], mtimeMs: 1, ctimeMs: 1, ino: root }],
+    [cwd, { entries: [dirent('session-one', true)], mtimeMs: 1, ctimeMs: 1, ino: cwd }],
+    [logDir, { entries: [dirent('session.v4.jsonl.zstd', false)], mtimeMs: 1, ctimeMs: 1, ino: logDir }],
+  ])
+  const time = new Date(2026, 9, 12, 3).getTime()
+  const ev = (turn, input) => ({ type: 'assistant/message', time: time + turn, data: { turn, step: 1, message: { source: { provider: 'fixture', model: 'model' } }, usage: { inputTokens: input, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 0 } } })
+  const frame = evs => zlib.zstdCompressSync(Buffer.from(evs.map(e => JSON.stringify(e)).join('\n') + '\n'))
+  const sessionFrame = zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: 'session', id: 'session-one', cwd: 'fixture' }) + '\n'))
+  const first = Buffer.concat([sessionFrame, frame([ev(1, 10)])])
+  const files = new Map([[logFile, { data: first, mtimeMs: 1 }]])
+  let stamp = 1
+  const io = { ...fs,
+    readdirSync(d) { const x = dirs.get(String(d)); if (!x) throw new Error('ENOENT'); return x.entries },
+    statSync(f) { const x = files.get(String(f)) || dirs.get(String(f)); if (!x) throw new Error('ENOENT'); return { mtimeMs: x.mtimeMs, size: x.data ? x.data.length : 0 } },
+    readFileSync(f) { const x = files.get(String(f)); if (!x) throw new Error('ENOENT'); return x.data },
+    mkdirSync() {}, writeFileSync() {}, renameSync() {},
+  }
+  const api = load('src/aggregate.ts', 'scan', { 'node:fs': io, 'node:os': { ...os, homedir: () => home } })
+  const a = await api.scan()
+  assert.equal(a.metrics.totalTokens, 15)
+  assert.equal((await api.scan()).dayTotals, a.dayTotals, 'hit reuses')
+  files.set(logFile, { data: Buffer.concat([first, frame([ev(2, 20)])]), mtimeMs: ++stamp })
+  const c = await api.scan()
+  assert.equal(c.metrics.totalTokens, 40, 'append is folded')
+  assert.notEqual(c.dayTotals, a.dayTotals, 'changed input must not reuse stale derived')
+  assert.equal((await api.scan()).dayTotals, c.dayTotals, 'hit reuses the new result')
 })
 
 test('projection memo hits avoid fixed-count yields; slow reads still yield', async () => {
@@ -192,6 +285,38 @@ test('unchanged responses renew client TTL without replacing the data reference'
   assert.equal(await f.api.fetchState(), first)
   assert.equal(await f.api.fetchState(), first)
   assert.equal(calls, 2, 'an unchanged response is still a successful cache renewal')
+})
+
+test('poll with only freshness telemetry changed reuses the data reference (no whole-panel rerender)', async () => {
+  let n = 0
+  const f = clientFixture(async () => {
+    n++
+    const s = structuredClone(state)
+    s.updatedAt = 1000 + n * 15_000
+    s.source = { logs: 1, cacheHits: 1, scanMs: 10 + n * 3, updatedAt: 1000 + n * 15_000 }
+    return response(s)
+  })
+  const first = await f.api.fetchState(true)
+  f.advance(10_001)
+  const second = await f.api.fetchState(true)
+  assert.equal(second, first, 'only updatedAt changed → bail out')
+  assert.equal(n, 2)
+})
+
+test('changed payload or source counters replace the data reference', async () => {
+  let n = 0
+  const f = clientFixture(async () => {
+    n++
+    const s = structuredClone(state)
+    s.days = { '2026-10-12': 10 + n }
+    s.source = { logs: n, cacheHits: n, scanMs: 19, updatedAt: 1000 + n * 15_000 }
+    return response(s)
+  })
+  const first = await f.api.fetchState(true)
+  f.advance(10_001)
+  const second = await f.api.fetchState(true)
+  assert.notEqual(second, first, 'real data change must produce a new reference')
+  assert.equal(second.days['2026-10-12'], 12)
 })
 
 test('a forced refresh waits for a fresh request rather than joining a stale one', async () => {

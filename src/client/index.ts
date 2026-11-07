@@ -321,8 +321,20 @@ function fetchState(force?: boolean): Promise<any> {
     })
     .then(function (s: any) {
       _cache.promise = null
-      // 内容没变 → 复用旧对象引用，setData 时 React bail out，避免每分钟整棵重渲染造成滑动顿挫
-      var raw = JSON.stringify(s)
+      // 比较串排除易变遥测：宿主每轮刷新都写当前时间（updatedAt），且扫描耗时（scanMs）
+      // 逐轮抖动；两者若纳入比较则「内容没变 → 复用旧引用」永不生效，15s 轮询会把
+      // 整棵面板树（实测 775 vnode / ~9ms）重渲染一遍。
+      // 实质数据（days/metrics/models/dayModels/pricing + source 的计数类字段）全在比较串里，
+      // 只有它们变了才换新对象；source.updatedAt / scanMs 与顶层 updatedAt 仅用于文案，
+      // 变化时复用旧值不影响正确性（分钟粒度 / 一行耗时数字）。
+      var stable: any = Object.assign({}, s)
+      delete stable.updatedAt
+      if (s.source) {
+        stable.source = Object.assign({}, s.source)
+        delete stable.source.updatedAt
+        delete stable.source.scanMs
+      }
+      var raw = JSON.stringify(stable)
       _cache.at = Date.now() // 内容相同也续 TTL，避免每次访问都再次发请求。
       if (raw === _cache.raw) return _cache.data || s
       _cache.raw = raw

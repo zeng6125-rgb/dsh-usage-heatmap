@@ -955,34 +955,44 @@ export function foldZstdSession(buf: Buffer) {
 // 文件枚举
 // ---------------------------------------------------------------------------
 
-/** 目录成员 memo：每轮仍 stat 全部目录/日志；新增、删除或替换目录时重读成员，不缓存整棵日志列表。 */
-const logDirMemo = new Map<string, { mtime: number; ctime: number; ino: number; entries: fs.Dirent[] }>()
+/** 目录成员 memo：每轮仍 stat 全部目录；成员变化时重读并算出相对路径，命中时直接复用
+ *  （全命中轮零 path.join / path.relative，实测省 ~4ms/轮）。新增、删除或替换目录仍会失效。 */
+const logDirMemo = new Map<string, {
+  mtime: number; ctime: number; ino: number
+  relFiles: string[]                      // 直属日志文件，相对 root
+  subDirs: Array<[string, string]>        // [绝对路径, 相对 root 的前缀]
+}>()
 
 function listLogFiles(root: string): string[] {
   const out: string[] = []
   const seen = new Set<string>()
-  const walk = (dir: string): void => {
-    let ents: fs.Dirent[]
+  const walk = (dir: string, relDir: string): void => {
+    let memo: ReturnType<typeof logDirMemo.get>
     try {
       const st = fs.statSync(dir)
-      const memo = logDirMemo.get(dir)
-      if (memo && memo.mtime === st.mtimeMs && memo.ctime === st.ctimeMs && memo.ino === st.ino) {
-        ents = memo.entries
+      const hit = logDirMemo.get(dir)
+      if (hit && hit.mtime === st.mtimeMs && hit.ctime === st.ctimeMs && hit.ino === st.ino) {
+        memo = hit
       } else {
-        ents = fs.readdirSync(dir, { withFileTypes: true })
-        logDirMemo.set(dir, { mtime: st.mtimeMs, ctime: st.ctimeMs, ino: st.ino, entries: ents })
+        const ents = fs.readdirSync(dir, { withFileTypes: true })
+        const relFiles: string[] = []
+        const subDirs: Array<[string, string]> = []
+        for (const e of ents) {
+          const rel = path.join(relDir, e.name)
+          if (e.isDirectory()) subDirs.push([path.join(dir, e.name), rel])
+          else if (e.isFile() && LOG_RE.test(e.name)) relFiles.push(rel)
+        }
+        memo = { mtime: st.mtimeMs, ctime: st.ctimeMs, ino: st.ino, relFiles, subDirs }
+        logDirMemo.set(dir, memo)
       }
       seen.add(dir)
     } catch {
       return
     }
-    for (const e of ents) {
-      const p = path.join(dir, e.name)
-      if (e.isDirectory()) walk(p)
-      else if (e.isFile() && LOG_RE.test(e.name)) out.push(path.relative(root, p))
-    }
+    for (const f of memo!.relFiles) out.push(f)
+    for (const [d, rel] of memo!.subDirs) walk(d, rel)
   }
-  walk(root)
+  walk(root, '')
   for (const dir of logDirMemo.keys()) if (!seen.has(dir)) logDirMemo.delete(dir)
   return out
 }
@@ -1424,6 +1434,18 @@ function mergeDayModels(sessions: Record<string, LogSessionEntry>, archived: Rec
   return out
 }
 
+/** 上游派生结果复用：全命中且未跨日、分类集合未变时，mergeDays/computeMetrics/
+ *  mergeModels/mergeDayModels 的输入完全相同，重算纯属浪费（实测 ~7ms/轮）。
+ *  指纹 = 输入对象引用（cache 是唯一写者）+ 本地日 + 三桶键数 + 子代理集合大小；
+ *  source 遥测（scanMs/updatedAt）每轮新造，不进入复用范围。 */
+let derivedMemo: {
+  key: string
+  dayTotals: Record<string, number>
+  metrics: UsageMetrics
+  models: ModelBuckets
+  dayModels: DayModelBuckets
+} | null = null
+
 async function runScan(): Promise<ScanResult> {
   if (typeof zstdDecompressSync !== 'function') {
     // 早失败：否则缺 zstd 支持的运行时会把每帧解码吞成 dropped，静默产出 0 数据
@@ -1545,15 +1567,48 @@ async function runScan(): Promise<ScanResult> {
     for (const c of meta.children) subagentBare.add(bareId(c))
   }
 
+  /* 输入指纹：dirty 只是「本轮是否写盘」，不影响输入内容（首轮全折后结果即对）。
+     subagentBare 用**内容排序串**而非 size：proj 里一个子代理标签换成另一个（size 不变、
+     dirty 仍 false）会改变主/子代理分类，必须让指纹失效。本地日兜住今日/本周/连续活跃跨日。 */
+  const subKey = [...subagentBare].sort().join(',')
+  const fp = [
+    todayKey(),
+    Object.keys(cache.sessions).length,
+    Object.keys(cache.orphans).length,
+    Object.keys(archived).length,
+    subKey,
+  ].join('|')
+  if (derivedMemo && derivedMemo.key === fp && !dirty) {
+    return {
+      dayTotals: derivedMemo.dayTotals,
+      metrics: derivedMemo.metrics,
+      models: derivedMemo.models,
+      dayModels: derivedMemo.dayModels,
+      source: {
+        logs: rels.length,
+        orphans: Object.keys(cache.orphans).length,
+        archived: Object.keys(archived).length,
+        decoded,
+        droppedFrames,
+        cacheHits,
+        scanMs: Date.now() - t0,
+        updatedAt: Date.now(),
+      },
+    }
+  }
+
   const days = mergeDays(cache.sessions, cache.orphans, archived)
   // dayTotals 由 computeMetrics 顺带产出（同一次遍历），不再二次遍历 days
   const { metrics, dayTotals } = computeMetrics(days, cache.sessions, cache.orphans, archived, subagentBare)
+  const models = mergeModels(cache.sessions, archived)
+  const dayModels = mergeDayModels(cache.sessions, archived)
+  derivedMemo = { key: fp, dayTotals, metrics, models, dayModels }
 
   return {
     dayTotals,
     metrics,
-    models: mergeModels(cache.sessions, archived),
-    dayModels: mergeDayModels(cache.sessions, archived),
+    models,
+    dayModels,
     source: {
       logs: rels.length,
       orphans: Object.keys(cache.orphans).length,
