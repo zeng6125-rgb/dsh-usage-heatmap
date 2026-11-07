@@ -11,3 +11,6 @@ tools/
 # source checkout (DSH_CHECKOUT) that an end user does not have. Shipping the
 # compiled output is what makes the git install work without a build step.
 !lib/
+
+preview-0.2.0.html
+preview-0.2.0.png
