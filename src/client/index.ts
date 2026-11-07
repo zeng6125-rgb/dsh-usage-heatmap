@@ -1188,8 +1188,7 @@ function CostBar(props: any): any {
       ),
     ),
     h('div', { className: 'uh-costFoot' },
-      '按公开单价估算的名义成本；本地反代 / 免费路由的实际支出可能远低于此 · 未定价 '
-      + fmtTokens(pricing.unpricedTokens) + ' tokens 不计入金额'),
+      '按公开单价估算的名义成本 · 未定价 ' + fmtTokens(pricing.unpricedTokens) + ' tokens 不计入金额'),
   )
 }
 
