@@ -10,13 +10,14 @@ An all-local token usage dashboard for the DeepSeek Harness settings page.
 | --- | --- | --- |
 | ![面板总览](docs/shot-panel-top.png) | ![模型消耗·按日期](docs/shot-panel-models-day.png) | ![模型消耗·按模型](docs/shot-panel-models-model.png) |
 
-> 图中数据来自作者本机（真实聚合结果），「其他 N 个模型」灰色柱/段为未进 top8 的模型合计；差额行诚实披露已删会话与投影缓存中无模型明细的部分。
+> 图中数据来自作者本机（真实聚合结果），「其他 N 个模型」灰色柱/段为未进 top8 的模型合计；差额行诚实披露已删会话与投影缓存中无模型明细的部分。新增的「明细」版式（全模型表 + provider 分组 + USD/CNY 成本）与计费汇总条见面板内切换，未另附截图。
 
 ## 功能 / Features
 
 - **九宫指标卡**：累计 Token、今日、昨日、峰值日、最长会话、连续活跃（当前 / 历史最长）、活跃天数、会话数（主 / 子代理）、子代理 Token。
 - **热力图**：GitHub 风格日历，每格 = 当日用量（周一为一周之始），可切「每日 / 每周 / 累计」三档；行标一/三/五/日与格子按同一 7 行网格对齐；列数随容器宽度自适应。
-- **模型消耗分析**：按 `provider/model` 汇总 token 消耗，双版式可切换——「按日期」堆叠多色柱（横轴本地日、柱内段为模型、8 色调色板 + 图例）与「按模型」柱状（数值标签贴柱顶）；悬停任意段/柱/图例显示三行明细，图例联动高亮全部柱中对应模型段。
+- **模型消耗分析**：按 `provider/model` 汇总 token 消耗，三版式可切换——「按日期」堆叠多色柱（横轴本地日、柱内段为模型、8 色调色板 + 图例）、「按模型」柱状（数值标签贴柱顶）、「明细」全模型表（按 provider 分组折叠、点表头切 token/成本排序、逐行四桶 + 占比 + 成本）；悬停任意段/柱/图例显示三行明细，图例联动高亮全部柱中对应模型段。
+- **模型计费**：按 `provider/model` 查价计算已定价模型的成本，USD 与 CNY 同时显示（汇率默认 7.2，可改）。价目表三源合并：pi-ai 内置离线表（约 1540 个有价模型）+ 启动时后台拉取的 [OpenRouter 公开价目表](https://openrouter.ai/api/v1/models) + `~/.dsh/storages/usage-heatmap/pricing-overrides.json` 自定义覆盖表（本机自定义路由与汇率在此填价）。未定价模型明确标注「未定价」且不计入金额，绝不按 0 计；免费/占位全零价不写入。用量数据始终只在本地聚合，网络请求仅用于拉取公开价目表，离线时自动退化为本地两源。
 - **活动洞察**：峰值日占比、连续活跃区间、会话构成、最长会话、子代理占比、缓存读取占比、今日四桶（未缓存输入 / 输出 / 缓存读 / 缓存写）、最活跃星期（附大头日期证据）。
 - **不丢数**：会话日志被删后，历史 token 仍从投影缓存（`session_projcache`）与已扫入的归档分桶中保留；面板把「已删归档」与「孤儿投影」分开标注。
 - **性能**：会话日志为仅追加的 zstd 帧格式，面板按帧边界**增量续解**——文件变更时只解码折叠尾部新帧，而非整文件重扫；目录成员与投影文件记忆化，仍逐轮检查目录与日志变更；按耗时让出事件循环，持久化快照使重启首帧秒开。可见面板每 15 秒直接获取本次扫描结果，隐藏页暂停轮询，避免旧缓存多等一轮；面板根为自滚动容器（`will-change: scroll-position`），滚动走合成器线程。
@@ -45,7 +46,7 @@ dsh plugin add https://github.com/zeng6125-rgb/dsh-usage-heatmap/releases/latest
 
 ## 数据来源 / Where the numbers come from
 
-全部为本地文件，插件不发起任何网络请求：
+数据来源全部为本地文件；唯一的外部请求是**启动时后台拉取 OpenRouter 公开模型价目表**（仅价格、不含任何用量或身份数据，失败静默退化为本地价目表）：
 
 | 来源 | 路径 | 用途 |
 | --- | --- | --- |
@@ -53,6 +54,21 @@ dsh plugin add https://github.com/zeng6125-rgb/dsh-usage-heatmap/releases/latest
 | 会话投影缓存 | `~/.dsh/storages/session_projcache/sessions/*.json` | 会话级累计 token、会话元信息、孤儿/回填口径对账 |
 | 聚合缓存 | `~/.dsh/storages/usage-heatmap/cache.json` | 增量扫描结果、归档与续扫边界 |
 | 快照 | `~/.dsh/storages/usage-heatmap/last-state.json` | 重启后首帧秒开 |
+| pi-ai 价目表 | DSH 安装内 `node_modules/@earendil-works/pi-ai/dist/providers/data/*.json` | 离线价格（USD / 百万 token，四桶 + 阶梯价） |
+| 价格覆盖表 | `~/.dsh/storages/usage-heatmap/pricing-overrides.json` | 自定义路由单价与 `usdCny` 汇率（可选） |
+
+覆盖表格式：
+
+```json
+{
+  "usdCny": 7.2,
+  "models": {
+    "qwen/Qwen3.8-Max": { "input": 0.5, "output": 2, "cacheRead": 0.05, "cacheWrite": 0 }
+  }
+}
+```
+
+单价单位一律 **USD / 百万 token**；键写日志里的完整 `provider/model` 名或裸模型名。`usdCny` 缺省 7.2。
 
 > 逐日分桶依赖会话日志中的事件时间戳；缺失时回退到 `createdAt` / 文件 mtime 摊分。
 > 增量续解使用前缀头尾各 512KB 与长度的采样 sha256 守卫；采样不符或续扫边界失效时回退全量折叠。正确性依赖 DSH 日志仅追加的契约：长前缀中部改写不在采样检测范围内，不承诺识别任意文件篡改。

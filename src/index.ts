@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { scan, type ScanResult } from './aggregate.js'
+import { buildModelPricing, loadLocalPricing, refreshPricing, type PricingTable } from './pricing.js'
 
 export const name = 'dsh-usage-heatmap'
 export const inject = ['tools', 'webServer']
@@ -37,6 +38,12 @@ type HostContext = Context & {
 const STATE_TTL_MS = 20_000
 let _stateCache: { at: number; data: any } | null = null
 let _stateInflight: Promise<any> | null = null
+/** 价目表：首帧同步用本地表；后台拉 OpenRouter（失败静默），完成后替换供下次扫描生效。 */
+let _pricingTable: PricingTable = loadLocalPricing()
+
+function pricingTable(): PricingTable {
+  return _pricingTable
+}
 
 /**
  * 持久化快照：每次扫描成功后把聚合结果整份落盘；宿主重启后首帧直接读快照
@@ -105,6 +112,7 @@ function payloadFrom(r: ScanResult, title: string): any {
     metrics: r.metrics,
     models: r.models,
     dayModels: r.dayModels,
+    pricing: buildModelPricing(r.models, pricingTable()),
     source: r.source,
     updatedAt: r.source.updatedAt,
   }
@@ -177,6 +185,11 @@ export function apply(ctx0: Context, config: Config): void {
   // 预热：后台跑增量扫描（逐文件让出事件循环，不阻塞宿主/设置页）
   void refreshState(title).catch(() => {
     /* 预热失败：第一次请求会重试 */
+  })
+
+  // 价目表：后台拉 OpenRouter 公开价（离线/失败静默保留本地表），完成即可被下次扫描采用
+  void refreshPricing().then(t => { _pricingTable = t }).catch(() => {
+    /* 保持本地表 */
   })
 
   // 防「删会话丢统计」：DSH 删除会话会同时删掉日志与投影，面板只能保住已扫描落缓存的
