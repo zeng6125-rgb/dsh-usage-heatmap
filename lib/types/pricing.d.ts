@@ -23,6 +23,10 @@ export interface ModelCost {
     cny: number;
     priced: boolean;
     source: string;
+    /** 命中的四桶单价（USD/百万 token），供明细行悬停核对算式；未定价为 undefined */
+    rates?: Rates;
+    /** 该模型四桶 token 原始值，配合 rates 可复算金额 */
+    buckets?: Buckets;
 }
 export interface ProviderCost {
     tokens: number;

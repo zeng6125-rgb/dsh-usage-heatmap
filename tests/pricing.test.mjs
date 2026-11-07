@@ -135,3 +135,31 @@ test('refreshPricing: offline keeps local table and reports zero openrouter coun
   assert.equal(typeof t.usdCny, 'number')
   cleanup()
 })
+
+test('buildModelPricing: priced rows carry rates and buckets so the cost formula is auditable', () => {
+  const { api, cleanup } = fixture({
+    overrides: { usdCny: 7.2, models: { 'p/model-x': R(1, 2, 0.1, 0.5) } },
+  })
+  const t = api.loadLocalPricing()
+  const buckets = [1e6, 2e6, 3e6, 4e6]
+  const p = api.buildModelPricing({ 'p/model-x': buckets }, t)
+  const c = p.models['p/model-x']
+  assert.equal(c.priced, true)
+  assert.deepEqual(c.rates, R(1, 2, 0.1, 0.5))
+  assert.deepEqual(c.buckets, buckets)
+  // 逐桶复算：1*1 + 2*2 + 0.1*3 + 0.5*4 = 7.3 USD
+  assert.equal(c.usd, 7.3)
+  assert.equal(p.models['p/model-x'].cny, 7.3 * 7.2)
+  cleanup()
+})
+
+test('buildModelPricing: unpriced rows expose no rates (never a fake 0-price formula)', () => {
+  const { api, cleanup } = fixture()
+  const p = api.buildModelPricing({ 'custom/unknown': [1e6, 0, 0, 0] }, api.loadLocalPricing())
+  const c = p.models['custom/unknown']
+  assert.equal(c.priced, false)
+  assert.equal(c.rates, undefined)
+  assert.equal(c.buckets, undefined)
+  assert.equal(c.usd, 0)
+  cleanup()
+})

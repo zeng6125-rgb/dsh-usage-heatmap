@@ -17,7 +17,16 @@ export interface PricingTable {
   entries: Record<string, PriceEntry>
   sources: { piAi: number; openrouter: number; overrides: number }
 }
-export interface ModelCost { usd: number; cny: number; priced: boolean; source: string }
+export interface ModelCost {
+  usd: number
+  cny: number
+  priced: boolean
+  source: string
+  /** 命中的四桶单价（USD/百万 token），供明细行悬停核对算式；未定价为 undefined */
+  rates?: Rates
+  /** 该模型四桶 token 原始值，配合 rates 可复算金额 */
+  buckets?: Buckets
+}
 export interface ProviderCost { tokens: number; usd: number; cny: number; models: number }
 export interface ModelPricing {
   usdCny: number
@@ -153,7 +162,9 @@ export function buildModelPricing(models: Record<string, Buckets>, table: Pricin
     const priced = !!entry && (entry.rates.input || entry.rates.output || entry.rates.cacheRead || entry.rates.cacheWrite) > 0
     const usd = priced ? costOf(entry!.rates, b) : 0
     const cny = usd * table.usdCny
-    out.models[name] = { usd, cny, priced, source: entry?.source || 'unpriced' }
+    out.models[name] = priced
+      ? { usd, cny, priced, source: entry!.source, rates: entry!.rates, buckets: b }
+      : { usd, cny, priced, source: 'unpriced' }
     out.totalUsd += usd
     if (priced) out.pricedTokens += tokens
     else out.unpricedTokens += tokens
