@@ -54,7 +54,7 @@ export declare function normalizeModelKey(s: string): string;
 export declare function loadLocalPricing(): PricingTable;
 /** OpenRouter /api/v1/models 响应合并：USD/token 字符串 ×1e6；只填空缺，不覆盖已有价。 */
 export declare function mergeOpenRouter(table: PricingTable, json: unknown): PricingTable;
-/** 后台刷新：失败（离线/超时）静默保留本地表，绝不阻塞面板。 */
+/** 后台刷新：失败（离线/超时）静默保留本地表，绝不阻塞面板；失败重试一次，避免启动瞬时抖动导致本轮无 OpenRouter 价。 */
 export declare function refreshPricing(): Promise<PricingTable>;
 export declare function costOf(rates: Rates, b: Buckets): number;
 /** 由逐模型四桶生成成本视图；不改缓存口径、不重扫日志。 */

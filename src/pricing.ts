@@ -125,13 +125,19 @@ export function mergeOpenRouter(table: PricingTable, json: unknown): PricingTabl
   return table
 }
 
-/** 后台刷新：失败（离线/超时）静默保留本地表，绝不阻塞面板。 */
+/** 后台刷新：失败（离线/超时）静默保留本地表，绝不阻塞面板；失败重试一次，避免启动瞬时抖动导致本轮无 OpenRouter 价。 */
 export async function refreshPricing(): Promise<PricingTable> {
   const table = loadLocalPricing()
-  try {
-    const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) })
-    if (r.ok) mergeOpenRouter(table, await r.json())
-  } catch { /* 离线：pi-ai + 覆盖表照常 */ }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) })
+      if (r.ok) {
+        mergeOpenRouter(table, await r.json())
+        break
+      }
+    } catch { /* 落到下一轮重试；两轮都失败则只用本地两源 */ }
+    if (attempt === 0) await new Promise(r => setTimeout(r, 3000))
+  }
   return table
 }
 
